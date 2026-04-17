@@ -42,7 +42,7 @@ class _UpdateEmailDialogWidgetState extends State<_UpdateEmailDialogWidget>
 
   bool _isLoading = false;
   bool _passwordVisible = false;
-  bool _isVerified = false;
+  final bool _isVerified = false;
   String? _errorText;
   _Step _step = _Step.reauth;
   String _newEmailSent = '';
@@ -59,8 +59,7 @@ class _UpdateEmailDialogWidgetState extends State<_UpdateEmailDialogWidget>
       vsync: this,
       duration: const Duration(milliseconds: 320),
     );
-    _fadeAnim =
-        CurvedAnimation(parent: _animCtrl, curve: Curves.easeOut);
+    _fadeAnim = CurvedAnimation(parent: _animCtrl, curve: Curves.easeOut);
     _slideAnim = Tween<Offset>(
       begin: const Offset(0, 0.06),
       end: Offset.zero,
@@ -94,7 +93,7 @@ class _UpdateEmailDialogWidgetState extends State<_UpdateEmailDialogWidget>
   }
 
   // ── Polling & Auto-Sync Logic ──────────────────────────────────────────────
-  
+
   void _startPolling() {
     _pollTimer?.cancel();
     _pollTimer = Timer.periodic(const Duration(seconds: 3), (timer) async {
@@ -122,13 +121,14 @@ class _UpdateEmailDialogWidgetState extends State<_UpdateEmailDialogWidget>
           }),
         );
 
-        debugPrint('[Polling] Sign-in attempt status: ${signInResp.statusCode}');
+        debugPrint(
+            '[Polling] Sign-in attempt status: ${signInResp.statusCode}');
 
         if (signInResp.statusCode == 200) {
           // ✅ SUCCESS: The new email is now active — verification confirmed!
           debugPrint('[Polling] ✅ New email verified! Starting auto-sync...');
           timer.cancel();
-          
+
           final tokenBody = json.decode(signInResp.body);
           final idToken = tokenBody['idToken'] as String?;
           final uid = tokenBody['localId'] as String?;
@@ -137,10 +137,13 @@ class _UpdateEmailDialogWidgetState extends State<_UpdateEmailDialogWidget>
             // 1. Force the SDK to update its local state to the new email.
             // This is critical so that future actions (like another email change)
             // use the correct 'Original' email for security notifications.
-            await FirebaseAuth.instance.signInWithEmailAndPassword(
-              email: _newEmailSent,
-              password: _passwordCtrl.text,
-            ).catchError((e) => debugPrint('[Polling] SDK Sync warning: $e'));
+            await FirebaseAuth.instance
+                .signInWithEmailAndPassword(
+                  email: _newEmailSent,
+                  password: _passwordCtrl.text,
+                )
+                .catchError(
+                    (e) => debugPrint('[Polling] SDK Sync warning: $e'));
 
             // 2. Patch the RTDB and finalize UI
             _patchRTDB(idToken, uid);
@@ -159,7 +162,8 @@ class _UpdateEmailDialogWidgetState extends State<_UpdateEmailDialogWidget>
 
   Future<void> _patchRTDB(String idToken, String uid) async {
     try {
-      const dbBaseUrl = 'https://crowdsense-db-default-rtdb.asia-southeast1.firebasedatabase.app';
+      const dbBaseUrl =
+          'https://crowdsense-db-default-rtdb.asia-southeast1.firebasedatabase.app';
       final updateUrl = Uri.parse('$dbBaseUrl/users/$uid.json?auth=$idToken');
       final response = await http.patch(
         updateUrl,
@@ -182,8 +186,6 @@ class _UpdateEmailDialogWidgetState extends State<_UpdateEmailDialogWidget>
     }
   }
 
-
-
   // ── Step 1: Re-authenticate ───────────────────────────────────────────────
   Future<void> _reauth() async {
     if (!(_formKey.currentState?.validate() ?? false)) return;
@@ -205,12 +207,14 @@ class _UpdateEmailDialogWidgetState extends State<_UpdateEmailDialogWidget>
       final providerEmail = context.read<UserProvider>().email;
       await user.reload();
       final freshUser = FirebaseAuth.instance.currentUser;
-      
+
       // FIX: Prioritize the Database-synced providerEmail over the buggy local SDK cache.
       // If the SDK says 'A' but the DB says 'B', we trust the DB and log in as 'B'.
-      String targetLoginEmail = (providerEmail.isNotEmpty) ? providerEmail : (freshUser?.email ?? '');
-      
-      debugPrint('[Reauth] Attempting login for: $targetLoginEmail (Provider: $providerEmail, SDK: ${freshUser?.email})');
+      String targetLoginEmail =
+          (providerEmail.isNotEmpty) ? providerEmail : (freshUser?.email ?? '');
+
+      debugPrint(
+          '[Reauth] Attempting login for: $targetLoginEmail (Provider: $providerEmail, SDK: ${freshUser?.email})');
 
       await FirebaseAuth.instance.signInWithEmailAndPassword(
         email: targetLoginEmail,
@@ -229,8 +233,8 @@ class _UpdateEmailDialogWidgetState extends State<_UpdateEmailDialogWidget>
       if (!mounted) return;
       setState(() {
         _isLoading = false;
-        _errorText = e.toString().contains('Exception:') 
-            ? e.toString().split('Exception:').last 
+        _errorText = e.toString().contains('Exception:')
+            ? e.toString().split('Exception:').last
             : 'Unexpected error during verification.';
       });
     } finally {
@@ -251,19 +255,24 @@ class _UpdateEmailDialogWidgetState extends State<_UpdateEmailDialogWidget>
     final newEmail = _newEmailCtrl.text.trim();
 
     if (newEmail == user.email) {
-      setState(() => _errorText = 'The new email must be different from your current email.');
+      setState(() => _errorText =
+          'The new email must be different from your current email.');
       return;
     }
 
-    setState(() { _isLoading = true; _errorText = null; });
+    setState(() {
+      _isLoading = true;
+      _errorText = null;
+    });
 
     try {
       // 1. Force Dispatch Verification Email via Google Identity Toolkit REST API
       // We use getIdToken(true) to force the SDK to pull a fresh identity from the server.
       final idToken = await user.getIdToken(true);
       final apiKey = DefaultFirebaseOptions.currentPlatform.apiKey;
-      final verifyUrl = Uri.parse('https://identitytoolkit.googleapis.com/v1/accounts:sendOobCode?key=$apiKey');
-      
+      final verifyUrl = Uri.parse(
+          'https://identitytoolkit.googleapis.com/v1/accounts:sendOobCode?key=$apiKey');
+
       final response = await http.post(
         verifyUrl,
         body: json.encode({
@@ -273,7 +282,7 @@ class _UpdateEmailDialogWidgetState extends State<_UpdateEmailDialogWidget>
         }),
         headers: {'Content-Type': 'application/json'},
       );
-      
+
       if (response.statusCode != 200) {
         String errMsg = 'Failed to send verification email. Please try again.';
         try {
@@ -282,16 +291,16 @@ class _UpdateEmailDialogWidgetState extends State<_UpdateEmailDialogWidget>
             errMsg = errBody['error']['message'];
           }
         } catch (_) {}
-        
+
         throw FirebaseAuthException(
-          code: 'api-error', 
+          code: 'api-error',
           message: 'Error: $errMsg',
         );
       }
 
       if (!mounted) return;
       _newEmailSent = newEmail;
-      
+
       _transitionTo(_Step.verifyWaiting);
     } on FirebaseAuthException catch (e) {
       if (!mounted) return;
@@ -376,7 +385,7 @@ class _UpdateEmailDialogWidgetState extends State<_UpdateEmailDialogWidget>
               ],
             ),
             child: switch (_step) {
-              _Step.reauth  => _buildReauthView(cs),
+              _Step.reauth => _buildReauthView(cs),
               _Step.newEmail => _buildNewEmailView(cs),
               _Step.verifyWaiting => _buildVerifyWaitingView(cs),
               _Step.finalized => _buildFinalizedView(cs),
@@ -493,7 +502,6 @@ class _UpdateEmailDialogWidgetState extends State<_UpdateEmailDialogWidget>
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             _buildStepStrip(cs),
-
             Center(
               child: Container(
                 width: 60,
@@ -511,7 +519,6 @@ class _UpdateEmailDialogWidgetState extends State<_UpdateEmailDialogWidget>
               ),
             ),
             const SizedBox(height: 20),
-
             Text(
               'Verify Your Identity',
               textAlign: TextAlign.center,
@@ -532,7 +539,6 @@ class _UpdateEmailDialogWidgetState extends State<_UpdateEmailDialogWidget>
               ),
             ),
             const SizedBox(height: 28),
-
             TextFormField(
               controller: _passwordCtrl,
               obscureText: !_passwordVisible,
@@ -540,7 +546,8 @@ class _UpdateEmailDialogWidgetState extends State<_UpdateEmailDialogWidget>
               style: TextStyle(color: cs.onSurface, fontSize: 14),
               decoration: InputDecoration(
                 labelText: 'Current Password',
-                prefixIcon: Icon(Icons.lock_outline, color: cs.onSurfaceVariant),
+                prefixIcon:
+                    Icon(Icons.lock_outline, color: cs.onSurfaceVariant),
                 suffixIcon: IconButton(
                   icon: Icon(
                     _passwordVisible
@@ -564,7 +571,6 @@ class _UpdateEmailDialogWidgetState extends State<_UpdateEmailDialogWidget>
               onFieldSubmitted: (_) => _reauth(),
             ),
             const SizedBox(height: 28),
-
             _ActionButton(
               label: 'Verify & Continue',
               isLoading: _isLoading,
@@ -635,8 +641,8 @@ class _UpdateEmailDialogWidgetState extends State<_UpdateEmailDialogWidget>
             if (user?.email != null) ...[
               Center(
                 child: Container(
-                  padding: const EdgeInsets.symmetric(
-                      horizontal: 12, vertical: 7),
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
                   decoration: BoxDecoration(
                     color: cs.onSurfaceVariant.withValues(alpha: 0.08),
                     borderRadius: BorderRadius.circular(8),
@@ -717,7 +723,6 @@ class _UpdateEmailDialogWidgetState extends State<_UpdateEmailDialogWidget>
         mainAxisSize: MainAxisSize.min,
         children: [
           _buildStepStrip(cs),
-          
           Container(
             width: 72,
             height: 72,
@@ -732,7 +737,6 @@ class _UpdateEmailDialogWidgetState extends State<_UpdateEmailDialogWidget>
             ),
           ),
           const SizedBox(height: 24),
-
           Text(
             'Waiting for Verification...',
             textAlign: TextAlign.center,
@@ -743,13 +747,11 @@ class _UpdateEmailDialogWidgetState extends State<_UpdateEmailDialogWidget>
             ),
           ),
           const SizedBox(height: 18),
-
           Text(
             'A link has been sent to:',
             style: TextStyle(fontSize: 13, color: cs.onSurfaceVariant),
           ),
           const SizedBox(height: 8),
-          
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
             decoration: BoxDecoration(
@@ -765,9 +767,7 @@ class _UpdateEmailDialogWidgetState extends State<_UpdateEmailDialogWidget>
               ),
             ),
           ),
-          
           const SizedBox(height: 24),
-          
           Text(
             'Please click the link in your browser. This screen will automatically refresh '
             'once your account is secured.',
@@ -778,9 +778,7 @@ class _UpdateEmailDialogWidgetState extends State<_UpdateEmailDialogWidget>
               height: 1.5,
             ),
           ),
-          
           const SizedBox(height: 32),
-          
           _CancelButton(
             label: 'Close and Sync Later',
             onPressed: () => Navigator.of(context).pop(),
@@ -798,7 +796,6 @@ class _UpdateEmailDialogWidgetState extends State<_UpdateEmailDialogWidget>
         mainAxisSize: MainAxisSize.min,
         children: [
           _buildStepStrip(cs),
-          
           Container(
             width: 72,
             height: 72,
@@ -813,7 +810,6 @@ class _UpdateEmailDialogWidgetState extends State<_UpdateEmailDialogWidget>
             ),
           ),
           const SizedBox(height: 24),
-
           const Text(
             'Account Secured!',
             textAlign: TextAlign.center,
@@ -824,7 +820,6 @@ class _UpdateEmailDialogWidgetState extends State<_UpdateEmailDialogWidget>
             ),
           ),
           const SizedBox(height: 16),
-
           Text(
             'Your email address has been successfully updated to $_newEmailSent and your database '
             'profile is fully synchronized.',
@@ -835,9 +830,7 @@ class _UpdateEmailDialogWidgetState extends State<_UpdateEmailDialogWidget>
               height: 1.6,
             ),
           ),
-          
           const SizedBox(height: 32),
-
           SizedBox(
             height: 52,
             width: double.infinity,
@@ -853,7 +846,8 @@ class _UpdateEmailDialogWidgetState extends State<_UpdateEmailDialogWidget>
               ),
               child: Text(
                 _isVerified ? 'Continue to Profile' : 'Done',
-                style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15),
+                style:
+                    const TextStyle(fontWeight: FontWeight.bold, fontSize: 15),
               ),
             ),
           ),
@@ -899,8 +893,8 @@ class _ActionButton extends StatelessWidget {
               )
             : Text(
                 label,
-                style: const TextStyle(
-                    fontWeight: FontWeight.bold, fontSize: 15),
+                style:
+                    const TextStyle(fontWeight: FontWeight.bold, fontSize: 15),
               ),
       ),
     );

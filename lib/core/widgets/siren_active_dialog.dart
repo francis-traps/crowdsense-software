@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:provider/provider.dart';
 import '../theme/app_colors.dart';
 import '../providers/siren_provider.dart';
 import 'custom_notification_modal.dart';
@@ -30,7 +29,8 @@ class SirenActiveDialog {
                 children: [
                   IconButton(
                     onPressed: () => Navigator.pop(context),
-                    icon: Icon(Icons.close_rounded, color: isDark ? Colors.white38 : Colors.black38),
+                    icon: Icon(Icons.close_rounded,
+                        color: isDark ? Colors.white38 : Colors.black38),
                     padding: EdgeInsets.zero,
                     constraints: const BoxConstraints(),
                   ),
@@ -41,7 +41,8 @@ class SirenActiveDialog {
                 decoration: BoxDecoration(
                   color: color.withValues(alpha: 0.1),
                   shape: BoxShape.circle,
-                  border: Border.all(color: color.withValues(alpha: 0.2), width: 1),
+                  border:
+                      Border.all(color: color.withValues(alpha: 0.2), width: 1),
                 ),
                 child: Icon(icon, color: color, size: 56),
               ),
@@ -59,9 +60,9 @@ class SirenActiveDialog {
               Text(
                 "$title\nIS ACTIVE",
                 style: TextStyle(
-                  fontWeight: FontWeight.w900, 
-                  color: color, 
-                  fontSize: 24, 
+                  fontWeight: FontWeight.w900,
+                  color: color,
+                  fontSize: 24,
                   height: 1.1,
                   letterSpacing: 1.0,
                 ),
@@ -86,7 +87,7 @@ class SirenActiveDialog {
                 "General evacuation alarms are currently sounding across the facility. All zones are locked for emergency clearance.",
                 textAlign: TextAlign.center,
                 style: TextStyle(
-                  fontSize: 13, 
+                  fontSize: 13,
                   height: 1.5,
                   color: isDark ? Colors.white70 : Colors.black54,
                 ),
@@ -95,7 +96,8 @@ class SirenActiveDialog {
           ),
           contentPadding: const EdgeInsets.fromLTRB(30, 10, 30, 24),
           actionsAlignment: MainAxisAlignment.center,
-          actionsPadding: const EdgeInsets.only(bottom: 30, left: 30, right: 30),
+          actionsPadding:
+              const EdgeInsets.only(bottom: 30, left: 30, right: 30),
           actions: [
             SizedBox(
               width: double.infinity,
@@ -114,8 +116,11 @@ class SirenActiveDialog {
                 },
                 icon: const Icon(Icons.power_settings_new_rounded, size: 24),
                 label: const Text(
-                  "TERMINATE SIREN", 
-                  style: TextStyle(fontWeight: FontWeight.w900, fontSize: 16, letterSpacing: 1.5),
+                  "TERMINATE SIREN",
+                  style: TextStyle(
+                      fontWeight: FontWeight.w900,
+                      fontSize: 16,
+                      letterSpacing: 1.5),
                 ),
                 style: ElevatedButton.styleFrom(
                   backgroundColor: color.withValues(alpha: 0.1),
@@ -125,7 +130,8 @@ class SirenActiveDialog {
                   shadowColor: Colors.transparent,
                   shape: RoundedRectangleBorder(
                     borderRadius: BorderRadius.circular(16),
-                    side: BorderSide(color: color.withValues(alpha: 0.5), width: 1.5),
+                    side: BorderSide(
+                        color: color.withValues(alpha: 0.5), width: 1.5),
                   ),
                 ),
               ),
