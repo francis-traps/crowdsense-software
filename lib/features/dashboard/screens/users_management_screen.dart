@@ -440,7 +440,7 @@ class _UsersManagementScreenState extends State<UsersManagementScreen> {
                               shape: RoundedRectangleBorder(
                                   borderRadius: BorderRadius.circular(8)),
                               color: isDark
-                                  ? const Color(0xFF1E1E2E)
+                                  ? AppColors.surfaceDark
                                   : Colors.white,
                               onSelected: (value) {
                                 if (value == 'delete') {
@@ -557,10 +557,10 @@ class _UsersManagementScreenState extends State<UsersManagementScreen> {
     // CSS reference colors mapped to Flutter
     // Container = the pill (.search-container)
     // TextField  = transparent input (.search-input { background: transparent; border: none; outline: none })
-    const Color containerBg = Color(0xFF313338); // #313338 dark grey fill
-    const Color borderBlue = Color(0xFF3b82f6); // #3b82f6 crisp blue
-    const Color lightBg = Color(0xFFF1F5F9); // light-mode equivalent
-    const Color placeholderC = Color(0xFF9CA3AF); // #9ca3af placeholder
+    final Color containerBg = isDark ? AppColors.surfaceDark : const Color(0xFFF1F5F9); 
+    const Color borderBlue = AppColors.primaryBlue; 
+    final Color lightBg = const Color(0xFFF1F5F9); 
+    const Color placeholderC = Color(0xFF9CA3AF); 
 
     return AnimatedContainer(
       duration: const Duration(milliseconds: 200),
@@ -638,8 +638,8 @@ class _UsersManagementScreenState extends State<UsersManagementScreen> {
     required void Function(String?) onChanged,
   }) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
-    final bgColor = isDark ? const Color(0xFF1E1E2E) : Colors.white;
-    final borderColor = Theme.of(context).colorScheme.outline.withValues(alpha: 0.2);
+    final bgColor = isDark ? AppColors.surfaceDark : Colors.white;
+    final borderColor = Theme.of(context).colorScheme.outline.withValues(alpha: 0.15);
     return PopupMenuButton<String>(
       onSelected: onChanged,
       offset: const Offset(0, 42),
@@ -680,8 +680,8 @@ class _UsersManagementScreenState extends State<UsersManagementScreen> {
   }
 
   Widget _buildAdvanceFilterButton(bool isDark) {
-    final bgColor = isDark ? const Color(0xFF1E1E2E) : Colors.white;
-    final borderColor = Theme.of(context).colorScheme.outline.withValues(alpha: 0.2);
+    final bgColor = isDark ? AppColors.surfaceDark : Colors.white;
+    final borderColor = Theme.of(context).colorScheme.outline.withValues(alpha: 0.15);
     return Container(
       height: 38,
       padding: const EdgeInsets.symmetric(horizontal: 12),

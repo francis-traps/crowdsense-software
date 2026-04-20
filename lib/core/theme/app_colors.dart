@@ -11,8 +11,8 @@ class AppColors {
   static const Color accentCyan = Color(0xFF06B6D4); // Cyan accent
 
   // Backgrounds & Surface
-  static const Color backgroundDark = Color(0xFF11141D); // Darker background
-  static const Color surfaceDark = Color(0xFF222838); // Card/Surface color
+  static const Color backgroundDark = Color(0xFF0F172A); // Deep Navy/Slate (Slate 900)
+  static const Color surfaceDark = Color(0xFF1E293B); // Dark Slate Blue (Slate 800)
   static const Color backgroundLight = Color(0xFFF8FAFC); // Very soft cool white
   static const Color surfaceLight = Color(0xFFFFFFFF); // Pure white cards
   static const Color surfaceGlass = Color(0x1AFFFFFF); // Semi-transparent white for glassmorphism
@@ -36,7 +36,7 @@ class AppColors {
   );
   
   static const LinearGradient darkGradient = LinearGradient(
-    colors: [backgroundDark, primaryDark],
+    colors: [backgroundDark, Color(0xFF1E293B)], // Navy to Slate Blue
     begin: Alignment.topCenter,
     end: Alignment.bottomCenter,
   );

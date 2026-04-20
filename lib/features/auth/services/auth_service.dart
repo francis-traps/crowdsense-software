@@ -13,8 +13,6 @@ class AuthService {
   /// Logs a user in using either their Email or their Username.
   /// Returns a Map payload containing the raw Firebase `User` object and the `userData` mapping.
   Future<Map<String, dynamic>> login(String identifier, String password) async {
-    // Re-establish RTDB connection in case it was dropped during logout
-    FirebaseDatabase.instance.goOnline();
     
     String loginEmail = identifier.trim();
     
@@ -49,6 +47,13 @@ class AuthService {
 
     // 2. Perform the actual Firebase Authentication with Email and Password
     try {
+      // CRITICAL FIX: Disconnect RTDB BEFORE the auth state change.
+      // The Firebase C++ RTDB SDK asserts connection_state_ == kDisconnected
+      // when it tries to reconnect after an auth change. If the persistent
+      // connection is still active, the assertion fails and abort() is called,
+      // crashing the Windows app. Going offline first ensures a clean state.
+      FirebaseDatabase.instance.goOffline();
+
       final userCredential = await _auth.signInWithEmailAndPassword(
         email: loginEmail,
         password: password,
@@ -99,6 +104,11 @@ class AuthService {
           print('[AuthService] Email synchronization failure: $e');
         }
       }
+
+      // Re-establish RTDB connection now that auth is fully settled.
+      // This reconnects with the new credentials so the persistent connection
+      // transitions from kDisconnected -> kConnecting -> kConnected cleanly.
+      FirebaseDatabase.instance.goOnline();
 
       // Return a convenient bundle containing both the secure auth reference and UI data 
       return {

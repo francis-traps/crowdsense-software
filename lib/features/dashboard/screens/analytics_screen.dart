@@ -165,32 +165,7 @@ class AnalyticsScreen extends StatelessWidget {
             const SizedBox(width: 20),
           ],
         ),
-        const SizedBox(height: 32),
-        
-        
-        // --- SECTION 2: Hardware Health & System Performance ---
-        _buildSectionTitle(context, "HARDWARE & SYSTEM HEALTH"),
-        const SizedBox(height: 24),
-        
-        const SizedBox(height: 16),
-        
-        // Power Stability Pie Chart
-        _buildHardwareCard(
-           context: context,
-           title: "Power Stability",
-           subtitle: "Mains vs Battery Backup Usage",
-           icon: Icons.power,
-           color: AppColors.statusSafe,
-           child: SizedBox(
-             height: 200,
-             child: _buildPowerStabilityChart(context),
-           )
-        ),
-        const SizedBox(height: 16),
-        
-        const SizedBox(height: 16),
-        
-        const SizedBox(height: 40), // Bottom padding
+        const SizedBox(height: 40),
       ],
     );
   }
@@ -264,77 +239,6 @@ class AnalyticsScreen extends StatelessWidget {
     );
   }
   
-  Widget _buildHardwareCard({
-    required BuildContext context,
-    required String title,
-    required String subtitle,
-    required IconData icon,
-    required Color color,
-    required Widget child,
-  }) {
-    final colorScheme = Theme.of(context).colorScheme;
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-    
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(20),
-      decoration: BoxDecoration(
-        color: colorScheme.surface,
-        borderRadius: BorderRadius.circular(24),
-        border: Border.all(color: isDark ? Colors.white.withValues(alpha: 0.05) : Colors.black.withValues(alpha: 0.05)),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withValues(alpha: isDark ? 0.2 : 0.05),
-            blurRadius: 10,
-            offset: const Offset(0, 4),
-          ),
-        ],
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-             children: [
-               Container(
-                  padding: const EdgeInsets.all(10),
-                  decoration: BoxDecoration(
-                    color: color.withValues(alpha: 0.1),
-                    shape: BoxShape.circle,
-                  ),
-                  child: Icon(icon, color: color, size: 24),
-               ),
-               const SizedBox(width: 16),
-               Expanded(
-                 child: Column(
-                   crossAxisAlignment: CrossAxisAlignment.start,
-                   children: [
-                     Text(
-                        title,
-                        style: TextStyle(
-                          fontSize: 18,
-                          fontWeight: FontWeight.bold,
-                          color: colorScheme.onSurface,
-                        ),
-                     ),
-                     const SizedBox(height: 2),
-                     Text(
-                        subtitle,
-                        style: TextStyle(
-                          fontSize: 13,
-                          color: colorScheme.onSurfaceVariant,
-                        ),
-                     ),
-                   ],
-                 ),
-               ),
-             ],
-          ),
-          const SizedBox(height: 24),
-          child,
-        ],
-      ),
-    );
-  }
   
   Widget _buildSubHeader(BuildContext context, String title, IconData icon) {
     final colorScheme = Theme.of(context).colorScheme;
@@ -640,57 +544,6 @@ class AnalyticsScreen extends StatelessWidget {
     );
   }
   
-  Widget _buildPowerStabilityChart(BuildContext context) {
-     final colorScheme = Theme.of(context).colorScheme;
-     
-     return Row(
-       children: [
-         Expanded(
-           child: PieChart(
-             PieChartData(
-               sectionsSpace: 2,
-               centerSpaceRadius: 40,
-               sections: [
-                 PieChartSectionData(
-                   color: AppColors.statusSafe,
-                   value: 95,
-                   title: '95%',
-                   radius: 50,
-                   titleStyle: const TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: Colors.white),
-                 ),
-                 PieChartSectionData(
-                   color: AppColors.statusWarning,
-                   value: 5,
-                   title: '5%',
-                   radius: 40,
-                   titleStyle: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.white),
-                 ),
-               ],
-             ),
-           ),
-         ),
-         Column(
-           mainAxisAlignment: MainAxisAlignment.center,
-           crossAxisAlignment: CrossAxisAlignment.start,
-           children: [
-             _buildLegendItem("Mains Power", AppColors.statusSafe, colorScheme),
-             const SizedBox(height: 8),
-             _buildLegendItem("Battery Backup", AppColors.statusWarning, colorScheme),
-           ],
-         ),
-       ],
-     );
-  }
-  
-  Widget _buildLegendItem(String title, Color color, ColorScheme colorScheme) {
-    return Row(
-      children: [
-        Container(width: 12, height: 12, decoration: BoxDecoration(color: color, shape: BoxShape.circle)),
-        const SizedBox(width: 8),
-        Text(title, style: TextStyle(color: colorScheme.onSurface, fontWeight: FontWeight.w500)),
-      ],
-    );
-  }
 
 
 

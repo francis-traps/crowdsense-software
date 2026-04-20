@@ -1194,19 +1194,19 @@ class _DevicesScreenState extends State<DevicesScreen> {
                                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                                 children: [
                                   Text("LOCATION", style: TextStyle(fontWeight: FontWeight.w800, fontSize: 12, letterSpacing: 1.2, color: colorScheme.onSurfaceVariant.withValues(alpha: 0.7))),
-                                  Text("STATUS", style: TextStyle(fontWeight: FontWeight.w800, fontSize: 12, letterSpacing: 1.2, color: colorScheme.onSurfaceVariant.withValues(alpha: 0.7))),
+                                  Text(title.toLowerCase().contains('power') ? "BATTERY %" : "STATUS", style: TextStyle(fontWeight: FontWeight.w800, fontSize: 12, letterSpacing: 1.2, color: colorScheme.onSurfaceVariant.withValues(alpha: 0.7))),
                                 ],
                               ),
                               Divider(height: 32, color: isDark ? Colors.white.withValues(alpha: 0.06) : Colors.black.withValues(alpha: 0.06)),
 
                               if (title.toLowerCase().contains('power')) ...[
-                                _buildPowerStatusRow("Main Entrance", true),
+                                _buildDeviceBatteryRow("Main Entrance", "87%"),
                                 const SizedBox(height: 10),
-                                _buildPowerStatusRow("Central Stairs", false),
+                                _buildDeviceBatteryRow("Central Stairs", "20%"),
                                 const SizedBox(height: 10),
-                                _buildPowerStatusRow("Parking Entrance", true),
+                                _buildDeviceBatteryRow("Parking Entrance", "41%"),
                                 const SizedBox(height: 10),
-                                _buildPowerStatusRow("Parking Side", false),
+                                _buildDeviceBatteryRow("Parking Side", "N/A"),
                               ] else ...[
                                 _buildDeviceStatusRow("Main Entrance", true),
                                 const SizedBox(height: 10),
@@ -1215,25 +1215,6 @@ class _DevicesScreenState extends State<DevicesScreen> {
                                 _buildDeviceStatusRow("Parking Entrance", true),
                                 const SizedBox(height: 10),
                                 _buildDeviceStatusRow("Parking Side", false),
-                              ],
-
-                              if (title.toLowerCase().contains('power')) ...[
-                                const SizedBox(height: 32),
-                                Row(
-                                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                                  children: [
-                                    Text("LOCATION", style: TextStyle(fontWeight: FontWeight.w800, fontSize: 12, letterSpacing: 1.2, color: colorScheme.onSurfaceVariant.withValues(alpha: 0.7))),
-                                    Text("BATTERY %", style: TextStyle(fontWeight: FontWeight.w800, fontSize: 12, letterSpacing: 1.2, color: colorScheme.onSurfaceVariant.withValues(alpha: 0.7))),
-                                  ],
-                                ),
-                                Divider(height: 32, color: isDark ? Colors.white.withValues(alpha: 0.06) : Colors.black.withValues(alpha: 0.06)),
-                                _buildDeviceBatteryRow("Main Entrance", "87%"),
-                                const SizedBox(height: 10),
-                                _buildDeviceBatteryRow("Central Stairs", "20%"),
-                                const SizedBox(height: 10),
-                                _buildDeviceBatteryRow("Parking Entrance", "41%"),
-                                const SizedBox(height: 10),
-                                _buildDeviceBatteryRow("Parking Side", "N/A"),
                               ],
                               
                               const SizedBox(height: 32),
@@ -1313,63 +1294,6 @@ class _DevicesScreenState extends State<DevicesScreen> {
     );
   }
 
-  Widget _buildPowerStatusRow(String location, bool isMainPower) {
-    final statusColor = isMainPower ? AppColors.statusSafe : AppColors.statusWarning;
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-    final colorScheme = Theme.of(context).colorScheme;
-
-    return Container(
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        color: isDark ? Colors.white.withValues(alpha: 0.03) : Colors.black.withValues(alpha: 0.02),
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(
-          color: isDark ? Colors.white.withValues(alpha: 0.05) : Colors.black.withValues(alpha: 0.04),
-        ),
-      ),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-        children: [
-          Text(
-            location,
-            style: TextStyle(
-              fontWeight: FontWeight.w700,
-              fontSize: 14,
-              color: colorScheme.onSurface,
-            ),
-          ),
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-            decoration: BoxDecoration(
-              color: statusColor.withValues(alpha: 0.1),
-              borderRadius: BorderRadius.circular(10),
-              border: Border.all(color: statusColor.withValues(alpha: 0.2)),
-            ),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Icon(
-                  isMainPower ? Icons.power_rounded : Icons.battery_alert_rounded,
-                  color: statusColor,
-                  size: 14,
-                ),
-                const SizedBox(width: 8),
-                Text(
-                  isMainPower ? "MAIN POWER" : "BACKUP POWER",
-                  style: TextStyle(
-                    fontWeight: FontWeight.w800,
-                    fontSize: 10,
-                    letterSpacing: 0.5,
-                    color: statusColor,
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
 
   Widget _buildDeviceBatteryRow(String location, String batteryStr) {
     int? batteryLevel;

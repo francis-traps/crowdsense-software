@@ -19,17 +19,48 @@ import 'core/providers/user_provider.dart';
 import 'core/providers/siren_provider.dart';
 
 import 'package:firebase_core/firebase_core.dart';
+import 'package:firebase_database/firebase_database.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'firebase_options.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  await dotenv.load(fileName: ".env");
+  try {
+    await dotenv.load(fileName: ".env");
+    debugPrint(
+        '[CrowdSense] .env loaded successfully. DB URL: ${dotenv.env['FIREBASE_DATABASE_URL']}');
+  } catch (e) {
+    debugPrint('[CrowdSense] WARNING: Failed to load .env file: $e');
+  }
 
-  await Firebase.initializeApp(
-    options: DefaultFirebaseOptions.currentPlatform,
-  );
+  try {
+    await Firebase.initializeApp(
+      options: DefaultFirebaseOptions.currentPlatform,
+    );
+  } catch (e) {
+    // If it's already initialized, ignore the exception
+    if (!e.toString().contains('duplicate-app')) {
+      rethrow;
+    }
+  }
+
+  // Explicitly set the RTDB URL to the correct asia-southeast1 region
+  // This prevents the "Database lives in a different region" error on Android
+  final dbUrl = dotenv.env['FIREBASE_DATABASE_URL'] ??
+      'https://crowdsense-db-default-rtdb.asia-southeast1.firebasedatabase.app';
+  // Go offline BEFORE setting the URL to prevent the C++ RTDB SDK assertion
+  // (connection_state_ == kDisconnected). The SDK auto-connects after
+  // initializeApp, so setting databaseURL while connected can trigger abort().
+  // The login flow will call goOnline() after authentication completes.
+  // NOTE: This workaround is ONLY needed on desktop (Windows/Linux/macOS).
+  // On mobile (Android/iOS), the native SDK handles this correctly and
+  // goOffline() would prevent RTDB listeners from ever receiving data.
+  if (!kIsWeb && (Platform.isWindows || Platform.isLinux || Platform.isMacOS)) {
+    FirebaseDatabase.instance.goOffline();
+  }
+  FirebaseDatabase.instance.databaseURL = dbUrl;
+  debugPrint('[CrowdSense] Firebase RTDB URL set to: $dbUrl');
 
   // Catch the firebase_auth Windows threading bug at the zone level
   // so it doesn't hard-crash the "Lost connection to device"
@@ -86,7 +117,7 @@ class CrowdSenseApp extends StatelessWidget {
           builder: (context, sirenProvider, child) {
             return MaterialApp(
               navigatorKey: navigatorKey,
-              title: 'CrowdSense',
+              title: 'CrowdSense App',
               debugShowCheckedModeBanner: false,
               theme: AppTheme.lightTheme,
               darkTheme: AppTheme.darkTheme,
@@ -116,7 +147,6 @@ class CrowdSenseApp extends StatelessWidget {
                           icon: sirenProvider.activeSirenIcon!,
                           color: sirenProvider.activeSirenColor!,
                           onTap: () {
-                            // Use the global navigatorKey context to show the dialog
                             final navContext = navigatorKey.currentContext;
                             if (navContext != null) {
                               SirenActiveDialog.show(navContext, sirenProvider);

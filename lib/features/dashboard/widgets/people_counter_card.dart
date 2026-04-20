@@ -191,7 +191,7 @@ class PeopleCounterCard extends StatelessWidget {
                                   child: Row(
                                     mainAxisAlignment: MainAxisAlignment.center,
                                     children: [
-                                      _buildMetricCard("Net Inside", currentInside, AppColors.statusSafe, isDark),
+                                      _buildMetricCard("Entries", currentInside, AppColors.statusSafe, isDark),
                                       const SizedBox(width: 12),
                                       _buildMetricCard("Exits", data['exits'] ?? 0, AppColors.statusDanger, isDark),
                                     ],

@@ -1,11 +1,10 @@
 import 'dart:async';
-import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import '../../../../core/theme/app_colors.dart';
-import '../../../../core/widgets/custom_notification_modal.dart';
 import '../../auth/screens/login_screen.dart';
 import '../../auth/screens/force_password_change_screen.dart';
 import '../../dashboard/screens/dashboard_screen.dart';
+
 
 class SplashScreen extends StatefulWidget {
   const SplashScreen({super.key});
@@ -49,7 +48,7 @@ class _SplashScreenState extends State<SplashScreen> with TickerProviderStateMix
   void didChangeDependencies() {
     super.didChangeDependencies();
     final args = ModalRoute.of(context)?.settings.arguments as Map<String, dynamic>?;
-    if (args != null) {
+    if (args != null && !_isAuthMode) {
       if (args.containsKey('authFuture')) {
         _isAuthMode = true;
         _authFuture = args['authFuture'];
@@ -67,15 +66,9 @@ class _SplashScreenState extends State<SplashScreen> with TickerProviderStateMix
           }
         }).catchError((error) {
           if (mounted) {
+            // Error handling now happens on the LoginScreen
+            // If we somehow reach here, just go back to login silently
             _targetRoute = '/login';
-            final errorMsg = error.toString().replaceFirst('Exception: ', '');
-            CustomNotificationModal.show(
-              context: context,
-              title: "Authentication Error",
-              message: errorMsg,
-              isSuccess: false,
-            );
-            // On error, also mark done so the loop can exit
             setState(() => _authCompleted = true);
           }
         });
@@ -242,7 +235,6 @@ class _SplashScreenState extends State<SplashScreen> with TickerProviderStateMix
             case '/dashboard':
               return const DashboardScreen();
             case '/force-password-change':
-              // Pass the route args that login encoded into the future result
               return ForcePasswordChangeScreen(
                 email: (_routeArgs?['email'] as String?) ?? '',
                 userData: (_routeArgs?['userData'] as Map<String, dynamic>?) ?? {},
@@ -252,16 +244,7 @@ class _SplashScreenState extends State<SplashScreen> with TickerProviderStateMix
           }
         },
         transitionsBuilder: (context, animation, secondaryAnimation, child) {
-          final curvedAnimation = CurvedAnimation(parent: animation, curve: Curves.easeInOut);
-          return Stack(
-            children: [
-              Container(color: Theme.of(context).scaffoldBackgroundColor),
-              ClipPath(
-                clipper: _DiagonalWipeClipper(progress: curvedAnimation.value),
-                child: child,
-              ),
-            ],
-          );
+          return FadeTransition(opacity: animation, child: child);
         },
       ),
     );
@@ -429,70 +412,3 @@ class _LeftToRightClipper extends CustomClipper<Rect> {
   bool shouldReclip(_LeftToRightClipper oldClipper) => progress != oldClipper.progress;
 }
 
-class _DiagonalWipeClipper extends CustomClipper<Path> {
-  final double progress;
-
-  _DiagonalWipeClipper({required this.progress});
-
-  @override
-  Path getClip(Size size) {
-    final Path path = Path();
-    
-    // We want a line that sweeps diagonally. 
-    // To cover the rectangle corner to corner, the line y = -x + c where c goes from 0 to width+height.
-    double currentDistance = (size.width + size.height) * progress;
-    
-    path.lineTo(math.min(size.width, currentDistance), 0);
-    
-    if (currentDistance > size.width) {
-      path.lineTo(size.width, currentDistance - size.width);
-    }
-    
-    path.lineTo(0, math.min(size.height, currentDistance));
-    
-    if (currentDistance > size.height) {
-      path.lineTo(currentDistance - size.height, size.height);
-      // Clean up the shape by connecting the necessary points
-      path.lineTo(math.min(size.width, currentDistance), 0);
-      path.lineTo(0, math.min(size.height, currentDistance));
-    }
-
-    path.close();
-
-    // A simpler way to do a diagonal reveal is using a polygon
-    final Path polygonPath = Path();
-    
-    if (progress <= 0.0) {
-      return polygonPath; // empty
-    }
-    if (progress >= 1.0) {
-      polygonPath.addRect(Rect.fromLTWH(0, 0, size.width, size.height));
-      return polygonPath;
-    }
-
-    // Top-left to bottom-right sweep
-    double d = (size.width + size.height) * progress;
-
-    polygonPath.moveTo(0, 0);
-    
-    if (d <= size.width) {
-      polygonPath.lineTo(d, 0);
-      polygonPath.lineTo(0, d);
-    } else if (d <= size.height) {
-      polygonPath.lineTo(d, 0);
-      polygonPath.lineTo(0, d);
-    } else {
-      polygonPath.lineTo(size.width, 0);
-      polygonPath.lineTo(size.width, d - size.width);
-      polygonPath.lineTo(d - size.height, size.height);
-      polygonPath.lineTo(0, size.height);
-    }
-    
-    polygonPath.close();
-
-    return polygonPath;
-  }
-
-  @override
-  bool shouldReclip(_DiagonalWipeClipper oldClipper) => progress != oldClipper.progress;
-}

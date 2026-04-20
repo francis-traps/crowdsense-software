@@ -22,7 +22,6 @@ class CustomNotificationModal {
           }
         });
 
-        final cs = Theme.of(context).colorScheme;
         final isDark = Theme.of(context).brightness == Brightness.dark;
         final Color surfaceColor = isDark ? const Color(0xFF1E2433) : Colors.white;
         final Color primaryColor = customColor ?? (isDestructive ? AppColors.statusDanger : (isSuccess ? AppColors.statusSafe : AppColors.statusDanger));
@@ -72,7 +71,7 @@ class CustomNotificationModal {
                 ),
                 const SizedBox(height: 12),
                 Text(
-                  "SYSTEM UPDATE VERIFIED",
+                  isSuccess ? "VERIFIED SUCCESS" : "VERIFICATION FAILED",
                   style: TextStyle(
                     fontSize: 10,
                     fontWeight: FontWeight.w800,

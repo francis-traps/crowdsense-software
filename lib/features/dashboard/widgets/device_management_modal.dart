@@ -28,50 +28,40 @@ class _DeviceManagementModalState extends State<DeviceManagementModal> {
   }
 
   void _listenToDevices() {
-    _devicesSubscription =
-        _dbRef.child('prototype_units').onValue.listen((event) {
+    _devicesSubscription = _dbRef.child('prototype_units').onValue.listen((event) {
       if (event.snapshot.value != null && event.snapshot.value is Map) {
-        final Map<dynamic, dynamic> devicesMap =
-            event.snapshot.value as Map<dynamic, dynamic>;
+        final Map<dynamic, dynamic> devicesMap = event.snapshot.value as Map<dynamic, dynamic>;
         final List<Map<String, dynamic>> loadedDevices = [];
-
+        
         devicesMap.forEach((key, value) {
           if (value is Map) {
             final device = <String, dynamic>{};
             value.forEach((k, v) => device[k.toString()] = v);
             device['macAddress'] = key.toString();
-
-            if (!device.containsKey('sensors') &&
-                device.containsKey('config') &&
-                device['config'] is Map) {
-              final configMap = device['config'] as Map;
-              final sensorsStrMap = <String, dynamic>{};
-              configMap.forEach((k, v) => sensorsStrMap[k.toString()] = v);
-              device['sensors'] = sensorsStrMap;
+            
+            if (!device.containsKey('sensors') && device.containsKey('config') && device['config'] is Map) {
+               final configMap = device['config'] as Map;
+               final sensorsStrMap = <String, dynamic>{};
+               configMap.forEach((k, v) => sensorsStrMap[k.toString()] = v);
+               device['sensors'] = sensorsStrMap;
             } else if (!device.containsKey('sensors')) {
-              device['sensors'] = <String, dynamic>{
-                "temp_threshold": 35.0,
-                "smoke_threshold": 300.0,
-                "flame_threshold": 200.0
-              };
+               device['sensors'] = <String, dynamic>{
+                  "temp_threshold": 35.0,
+                  "smoke_threshold": 300.0,
+                  "flame_threshold": 200.0
+               };
             }
 
-            // Ensure status has a string representation
-            if (!device.containsKey('status') || device['status'] == null) {
-              device['status'] = 'offline';
-            } else {
-              device['status'] = device['status'].toString();
-            }
+            // No longer fetching manual 'status' field as Operation Power is removed.
+            // Heartbeat data below will handle the LIVE/OFFLINE state.
 
             // Extract heartbeat data
             if (device.containsKey('heartbeat') && device['heartbeat'] is Map) {
               final hbMap = device['heartbeat'] as Map;
-              device['heartbeat_status'] =
-                  hbMap['connection_state']?.toString() ?? 'NEVER SEEN';
+              device['heartbeat_status'] = hbMap['connection_state']?.toString() ?? 'NEVER SEEN';
               device['heartbeat_last_seen'] = hbMap['last_seen'];
               device['heartbeat_ip'] = hbMap['ip_address']?.toString();
-              device['heartbeat_firmware'] =
-                  hbMap['firmware_version']?.toString();
+              device['heartbeat_firmware'] = hbMap['firmware_version']?.toString();
             } else {
               device['heartbeat_status'] = 'NEVER SEEN';
               device['heartbeat_last_seen'] = null;
@@ -109,7 +99,7 @@ class _DeviceManagementModalState extends State<DeviceManagementModal> {
     try {
       await _dbRef.child('prototype_units').child(mac).set({
         "name": name,
-        "status": "online",
+        "priority": _devices.length,
         "config": {
           "temp_threshold": 35.0,
           "smoke_threshold": 300.0,
@@ -134,7 +124,7 @@ class _DeviceManagementModalState extends State<DeviceManagementModal> {
 
   void _handleReorder(int oldIndex, int newIndex) {
     if (newIndex > oldIndex) newIndex -= 1;
-
+    
     setState(() {
       final device = _devices.removeAt(oldIndex);
       _devices.insert(newIndex, device);
@@ -142,34 +132,14 @@ class _DeviceManagementModalState extends State<DeviceManagementModal> {
 
     // Batch update priorities in Firebase
     for (int i = 0; i < _devices.length; i++) {
-      _dbRef.child('prototype_units').child(_devices[i]['macAddress']).update({
-        'priority': i,
-      });
+        _dbRef.child('prototype_units').child(_devices[i]['macAddress']).update({
+            'priority': i,
+        });
     }
   }
 
-  void _updateDeviceConfig(String mac, Map<String, dynamic> newSensors) async {
-    try {
-      await _dbRef
-          .child('prototype_units')
-          .child(mac)
-          .child('config')
-          .set(newSensors);
-    } catch (e) {
-      debugPrint("Error updating config: $e");
-    }
-  }
 
-  void _updateDeviceStatus(String mac, String newStatus) async {
-    try {
-      await _dbRef
-          .child('prototype_units')
-          .child(mac)
-          .update({"status": newStatus});
-    } catch (e) {
-      debugPrint("Error updating status: $e");
-    }
-  }
+  // Removed _updateDeviceStatus as manual power control is no longer supported.
 
   void _removeDeviceFromFirebase(String mac) async {
     try {
@@ -181,8 +151,7 @@ class _DeviceManagementModalState extends State<DeviceManagementModal> {
   }
 
   void _handleAddDevice() {
-    if (_macController.text.trim().isEmpty ||
-        _nameController.text.trim().isEmpty) {
+    if (_macController.text.trim().isEmpty || _nameController.text.trim().isEmpty) {
       CustomNotificationModal.show(
         context: context,
         title: "Missing Fields",
@@ -201,7 +170,7 @@ class _DeviceManagementModalState extends State<DeviceManagementModal> {
     _nameController.clear();
 
     FocusScope.of(context).unfocus();
-
+    
     CustomNotificationModal.show(
       context: context,
       title: "Device Added",
@@ -216,26 +185,19 @@ class _DeviceManagementModalState extends State<DeviceManagementModal> {
       builder: (context) {
         return AlertDialog(
           backgroundColor: Theme.of(context).colorScheme.surface,
-          shape:
-              RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
           title: Row(
             children: [
-              Icon(Icons.warning_amber_rounded,
-                  color: AppColors.statusDanger, size: 28),
+              Icon(Icons.warning_amber_rounded, color: AppColors.statusDanger, size: 28),
               const SizedBox(width: 12),
-              const Text("Remove Device",
-                  style: TextStyle(fontWeight: FontWeight.bold)),
+              const Text("Remove Device", style: TextStyle(fontWeight: FontWeight.bold)),
             ],
           ),
-          content: Text(
-              "Are you sure you want to permanently remove '$name'?\n\nThis will disconnect the hardware node and stop incoming sensor data."),
+          content: Text("Are you sure you want to permanently remove '$name'?\n\nThis will disconnect the hardware node and stop incoming sensor data."),
           actions: [
             TextButton(
               onPressed: () => Navigator.pop(context),
-              child: Text("Cancel",
-                  style: TextStyle(
-                      color: Theme.of(context).colorScheme.onSurfaceVariant,
-                      fontWeight: FontWeight.bold)),
+              child: Text("Cancel", style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant, fontWeight: FontWeight.bold)),
             ),
             ElevatedButton(
               onPressed: () {
@@ -246,11 +208,9 @@ class _DeviceManagementModalState extends State<DeviceManagementModal> {
                 backgroundColor: AppColors.statusDanger,
                 foregroundColor: Colors.white,
                 elevation: 0,
-                shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(10)),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
               ),
-              child: const Text("Delete",
-                  style: TextStyle(fontWeight: FontWeight.bold)),
+              child: const Text("Delete", style: TextStyle(fontWeight: FontWeight.bold)),
             ),
           ],
         );
@@ -260,7 +220,7 @@ class _DeviceManagementModalState extends State<DeviceManagementModal> {
 
   void _executeRemoveDevice(String mac, String name) {
     _removeDeviceFromFirebase(mac);
-
+    
     CustomNotificationModal.show(
       context: context,
       title: "Device Removed",
@@ -270,8 +230,7 @@ class _DeviceManagementModalState extends State<DeviceManagementModal> {
     );
   }
 
-  void _executeEditDevice(String oldMac, String newMac, String newName,
-      Map<String, dynamic> newSensors) async {
+  void _executeEditDevice(String oldMac, String newMac, String newName, Map<String, dynamic> newSensors) async {
     try {
       if (oldMac == newMac) {
         await _dbRef.child('prototype_units').child(oldMac).update({
@@ -279,24 +238,18 @@ class _DeviceManagementModalState extends State<DeviceManagementModal> {
           "config": newSensors,
         });
       } else {
-        final protoSnapshot =
-            await _dbRef.child('prototype_units').child(oldMac).get();
-        final sensorSnapshot =
-            await _dbRef.child('sensor_data').child(oldMac).get();
+        final protoSnapshot = await _dbRef.child('prototype_units').child(oldMac).get();
+        final sensorSnapshot = await _dbRef.child('sensor_data').child(oldMac).get();
 
         if (protoSnapshot.exists) {
-          final baseData =
-              Map<String, dynamic>.from(protoSnapshot.value as Map);
-          baseData["name"] = newName;
-          baseData["config"] = newSensors;
-          await _dbRef.child('prototype_units').child(newMac).set(baseData);
+           final baseData = Map<String, dynamic>.from(protoSnapshot.value as Map);
+           baseData["name"] = newName;
+           baseData["config"] = newSensors;
+           await _dbRef.child('prototype_units').child(newMac).set(baseData);
         }
 
         if (sensorSnapshot.exists) {
-          await _dbRef
-              .child('sensor_data')
-              .child(newMac)
-              .set(sensorSnapshot.value);
+           await _dbRef.child('sensor_data').child(newMac).set(sensorSnapshot.value);
         }
 
         await _dbRef.child('prototype_units').child(oldMac).remove();
@@ -340,9 +293,7 @@ class _DeviceManagementModalState extends State<DeviceManagementModal> {
             topRight: Radius.circular(32),
           ),
           border: Border.all(
-            color: isDark
-                ? Colors.white.withValues(alpha: 0.08)
-                : Colors.black.withValues(alpha: 0.06),
+            color: isDark ? Colors.white.withValues(alpha: 0.08) : Colors.black.withValues(alpha: 0.06),
           ),
           boxShadow: [
             BoxShadow(
@@ -366,23 +317,22 @@ class _DeviceManagementModalState extends State<DeviceManagementModal> {
                 ),
               ),
             ),
-
+            
             _buildHeader(context),
-
+            
             Expanded(
               child: SingleChildScrollView(
                 physics: const BouncingScrollPhysics(),
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 24, vertical: 8),
+                padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 8),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     _buildSectionTitle("ADD NEW DEVICE"),
                     const SizedBox(height: 16),
                     _buildAddDeviceForm(isDark),
-
+                    
                     const SizedBox(height: 32),
-
+                    
                     Row(
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
@@ -390,30 +340,21 @@ class _DeviceManagementModalState extends State<DeviceManagementModal> {
                         if (_devices.length > 1)
                           IconButton(
                             icon: Icon(
-                              _isReordering
-                                  ? Icons.check_circle_rounded
-                                  : Icons.reorder_rounded,
-                              color: _isReordering
-                                  ? AppColors.statusSafe
-                                  : AppColors.primaryBlue,
+                              _isReordering ? Icons.check_circle_rounded : Icons.reorder_rounded,
+                              color: _isReordering ? AppColors.statusSafe : AppColors.primaryBlue,
                               size: 22,
                             ),
                             style: IconButton.styleFrom(
-                              backgroundColor: (_isReordering
-                                      ? AppColors.statusSafe
-                                      : AppColors.primaryBlue)
-                                  .withValues(alpha: 0.12),
-                              shape: RoundedRectangleBorder(
-                                  borderRadius: BorderRadius.circular(10)),
+                              backgroundColor: (_isReordering ? AppColors.statusSafe : AppColors.primaryBlue).withValues(alpha: 0.12),
+                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
                             ),
-                            onPressed: () =>
-                                setState(() => _isReordering = !_isReordering),
+                            onPressed: () => setState(() => _isReordering = !_isReordering),
                           ),
                       ],
                     ),
                     const SizedBox(height: 16),
                     _buildDeviceList(isDark),
-
+                    
                     const SizedBox(height: 64), // Extra padding at bottom
                   ],
                 ),
@@ -472,14 +413,10 @@ class _DeviceManagementModalState extends State<DeviceManagementModal> {
           ),
           IconButton(
             onPressed: () => Navigator.pop(context),
-            icon: Icon(Icons.close_rounded,
-                color: colorScheme.onSurfaceVariant, size: 22),
+            icon: Icon(Icons.close_rounded, color: colorScheme.onSurfaceVariant, size: 22),
             style: IconButton.styleFrom(
-              backgroundColor: isDark
-                  ? Colors.white.withValues(alpha: 0.05)
-                  : Colors.black.withValues(alpha: 0.04),
-              shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(12)),
+              backgroundColor: isDark ? Colors.white.withValues(alpha: 0.05) : Colors.black.withValues(alpha: 0.04),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
             ),
           ),
         ],
@@ -494,10 +431,7 @@ class _DeviceManagementModalState extends State<DeviceManagementModal> {
         fontSize: 12,
         fontWeight: FontWeight.w800,
         letterSpacing: 1.2,
-        color: Theme.of(context)
-            .colorScheme
-            .onSurfaceVariant
-            .withValues(alpha: 0.7),
+        color: Theme.of(context).colorScheme.onSurfaceVariant.withValues(alpha: 0.7),
       ),
     );
   }
@@ -506,14 +440,9 @@ class _DeviceManagementModalState extends State<DeviceManagementModal> {
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: isDark
-            ? Colors.white.withValues(alpha: 0.03)
-            : Colors.black.withValues(alpha: 0.02),
+        color: isDark ? Colors.white.withValues(alpha: 0.03) : Colors.black.withValues(alpha: 0.02),
         borderRadius: BorderRadius.circular(20),
-        border: Border.all(
-            color: isDark
-                ? Colors.white.withValues(alpha: 0.05)
-                : Colors.black.withValues(alpha: 0.04)),
+        border: Border.all(color: isDark ? Colors.white.withValues(alpha: 0.05) : Colors.black.withValues(alpha: 0.04)),
       ),
       child: Column(
         children: [
@@ -522,27 +451,13 @@ class _DeviceManagementModalState extends State<DeviceManagementModal> {
             style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
             decoration: InputDecoration(
               labelText: "MAC ADDRESS",
-              labelStyle: TextStyle(
-                  fontSize: 11,
-                  fontWeight: FontWeight.w800,
-                  letterSpacing: 1.1,
-                  color: Theme.of(context)
-                      .colorScheme
-                      .primary
-                      .withValues(alpha: 0.85)),
+              labelStyle: TextStyle(fontSize: 11, fontWeight: FontWeight.w800, letterSpacing: 1.1, color: Theme.of(context).colorScheme.primary.withValues(alpha: 0.85)),
               hintText: "e.g. 00:1B:44:11:3A:B7",
-              prefixIcon: Icon(Icons.memory_rounded,
-                  color: AppColors.primaryBlue.withValues(alpha: 0.7),
-                  size: 20),
-              border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(12),
-                  borderSide: BorderSide.none),
+              prefixIcon: Icon(Icons.memory_rounded, color: AppColors.primaryBlue.withValues(alpha: 0.7), size: 20),
+              border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none),
               filled: true,
-              fillColor: isDark
-                  ? Colors.black.withValues(alpha: 0.2)
-                  : Colors.white.withValues(alpha: 0.5),
-              contentPadding:
-                  const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+              fillColor: isDark ? Colors.black.withValues(alpha: 0.2) : Colors.white.withValues(alpha: 0.5),
+              contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
             ),
           ),
           const SizedBox(height: 12),
@@ -551,27 +466,13 @@ class _DeviceManagementModalState extends State<DeviceManagementModal> {
             style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
             decoration: InputDecoration(
               labelText: "LOCATION/NODE NAME",
-              labelStyle: TextStyle(
-                  fontSize: 11,
-                  fontWeight: FontWeight.w800,
-                  letterSpacing: 1.1,
-                  color: Theme.of(context)
-                      .colorScheme
-                      .primary
-                      .withValues(alpha: 0.85)),
+              labelStyle: TextStyle(fontSize: 11, fontWeight: FontWeight.w800, letterSpacing: 1.1, color: Theme.of(context).colorScheme.primary.withValues(alpha: 0.85)),
               hintText: "e.g. CEA 3rd Floor",
-              prefixIcon: Icon(Icons.location_on_rounded,
-                  color: AppColors.primaryBlue.withValues(alpha: 0.7),
-                  size: 20),
-              border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(12),
-                  borderSide: BorderSide.none),
+              prefixIcon: Icon(Icons.location_on_rounded, color: AppColors.primaryBlue.withValues(alpha: 0.7), size: 20),
+              border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none),
               filled: true,
-              fillColor: isDark
-                  ? Colors.black.withValues(alpha: 0.2)
-                  : Colors.white.withValues(alpha: 0.5),
-              contentPadding:
-                  const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+              fillColor: isDark ? Colors.black.withValues(alpha: 0.2) : Colors.white.withValues(alpha: 0.5),
+              contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
             ),
           ),
           const SizedBox(height: 20),
@@ -583,8 +484,7 @@ class _DeviceManagementModalState extends State<DeviceManagementModal> {
                 backgroundColor: AppColors.primaryBlue,
                 foregroundColor: Colors.white,
                 padding: const EdgeInsets.symmetric(vertical: 14),
-                shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(14)),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
                 elevation: 0,
               ),
               child: const Row(
@@ -592,9 +492,7 @@ class _DeviceManagementModalState extends State<DeviceManagementModal> {
                 children: [
                   Icon(Icons.add_rounded, size: 20),
                   SizedBox(width: 8),
-                  Text("Add Device",
-                      style:
-                          TextStyle(fontWeight: FontWeight.w800, fontSize: 14)),
+                  Text("Add Device", style: TextStyle(fontWeight: FontWeight.w800, fontSize: 14)),
                 ],
               ),
             ),
@@ -611,17 +509,11 @@ class _DeviceManagementModalState extends State<DeviceManagementModal> {
           padding: const EdgeInsets.all(32.0),
           child: Column(
             children: [
-              Icon(Icons.devices_outlined,
-                  size: 48,
-                  color: Theme.of(context)
-                      .colorScheme
-                      .onSurfaceVariant
-                      .withValues(alpha: 0.5)),
+              Icon(Icons.devices_outlined, size: 48, color: Theme.of(context).colorScheme.onSurfaceVariant.withValues(alpha: 0.5)),
               const SizedBox(height: 16),
               Text(
                 "No devices configured yet.",
-                style: TextStyle(
-                    color: Theme.of(context).colorScheme.onSurfaceVariant),
+                style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant),
               ),
             ],
           ),
@@ -648,7 +540,7 @@ class _DeviceManagementModalState extends State<DeviceManagementModal> {
               index: index,
               onSave: _executeEditDevice,
               onRemove: _promptRemoveDevice,
-              onStatusToggle: _updateDeviceStatus,
+              onStatusToggle: (mac, status) {}, // No-op
             ),
           );
         },
@@ -663,13 +555,16 @@ class _DeviceManagementModalState extends State<DeviceManagementModal> {
       separatorBuilder: (context, index) => const SizedBox(height: 12),
       itemBuilder: (context, index) {
         final device = _devices[index];
+        // One-time cleanup: Remove 'status' field from RTDB if it exists
+        if (device.containsKey('status')) {
+           FirebaseDatabase.instance.ref().child('prototype_units').child(device['macAddress']).child('status').remove();
+        }
         return _buildDeviceTile(device, isDark, index: index);
       },
     );
   }
 
-  Widget _buildDeviceTile(Map<String, dynamic> device, bool isDark,
-      {int index = 0}) {
+  Widget _buildDeviceTile(Map<String, dynamic> device, bool isDark, {int index = 0}) {
     return _EditableDeviceTile(
       key: ValueKey(device["macAddress"]),
       device: device,
@@ -678,7 +573,9 @@ class _DeviceManagementModalState extends State<DeviceManagementModal> {
       index: index,
       onSave: _executeEditDevice,
       onRemove: _promptRemoveDevice,
-      onStatusToggle: _updateDeviceStatus,
+      onStatusToggle: (mac, status) {
+        // No-op as Operation Power is removed. Cleanup happens in _buildDeviceList.
+      },
     );
   }
 }
@@ -741,19 +638,15 @@ class _EditableDeviceTileState extends State<_EditableDeviceTile> {
 
   // --- Heartbeat helpers ---
   String get _hardwareState {
-    final hwStatus =
-        widget.device['heartbeat_status']?.toString() ?? 'NEVER SEEN';
+    final hwStatus = widget.device['heartbeat_status']?.toString() ?? 'NEVER SEEN';
     if (hwStatus == 'CONNECTED' || hwStatus == 'DISCONNECTED') {
-      return hwStatus;
+        return hwStatus;
     }
-
+    
     final lastSeen = widget.device['heartbeat_last_seen'];
     if (lastSeen != null) {
-      final ts = DateTime.fromMillisecondsSinceEpoch(
-          (lastSeen is int) ? lastSeen : (lastSeen as num).toInt());
-      return DateTime.now().difference(ts).inSeconds < 60
-          ? 'CONNECTED'
-          : 'DISCONNECTED';
+        final ts = DateTime.fromMillisecondsSinceEpoch((lastSeen is int) ? lastSeen : (lastSeen as num).toInt());
+        return DateTime.now().difference(ts).inSeconds < 60 ? 'CONNECTED' : 'DISCONNECTED';
     }
     return 'NEVER SEEN';
   }
@@ -765,8 +658,7 @@ class _EditableDeviceTileState extends State<_EditableDeviceTile> {
   String get _lastSeenText {
     final lastSeen = widget.device['heartbeat_last_seen'];
     if (lastSeen == null) return 'Never connected';
-    final ts = DateTime.fromMillisecondsSinceEpoch(
-        (lastSeen is int) ? lastSeen : (lastSeen as num).toInt());
+    final ts = DateTime.fromMillisecondsSinceEpoch((lastSeen is int) ? lastSeen : (lastSeen as num).toInt());
     final diff = DateTime.now().difference(ts);
     if (diff.inSeconds < 5) return 'Just now';
     if (diff.inSeconds < 60) return '${diff.inSeconds}s ago';
@@ -777,20 +669,16 @@ class _EditableDeviceTileState extends State<_EditableDeviceTile> {
 
   @override
   Widget build(BuildContext context) {
-    final bool isOnline = widget.device["status"] == "online";
     final isDark = widget.isDark;
+    final bool isLive = _isHardwareLive;
 
     return Container(
       margin: const EdgeInsets.only(bottom: 12),
       decoration: BoxDecoration(
-        color: isDark
-            ? Colors.white.withValues(alpha: 0.03)
-            : Colors.black.withValues(alpha: 0.01),
+        color: isDark ? Colors.white.withValues(alpha: 0.03) : Colors.black.withValues(alpha: 0.01),
         borderRadius: BorderRadius.circular(20),
         border: Border.all(
-          color: isDark
-              ? Colors.white.withValues(alpha: 0.05)
-              : Colors.black.withValues(alpha: 0.04),
+          color: isDark ? Colors.white.withValues(alpha: 0.05) : Colors.black.withValues(alpha: 0.04),
         ),
       ),
       child: Theme(
@@ -805,13 +693,12 @@ class _EditableDeviceTileState extends State<_EditableDeviceTile> {
           leading: Container(
             padding: const EdgeInsets.all(10),
             decoration: BoxDecoration(
-              color: (isOnline ? AppColors.primaryBlue : AppColors.textGrey)
-                  .withValues(alpha: 0.1),
+              color: (isLive ? AppColors.primaryBlue : AppColors.textGrey).withValues(alpha: 0.1),
               shape: BoxShape.circle,
             ),
             child: Icon(
               Icons.router_rounded,
-              color: isOnline ? AppColors.primaryBlue : AppColors.textGrey,
+              color: isLive ? AppColors.primaryBlue : AppColors.textGrey,
               size: 22,
             ),
           ),
@@ -823,211 +710,139 @@ class _EditableDeviceTileState extends State<_EditableDeviceTile> {
               color: Theme.of(context).colorScheme.onSurface,
             ),
           ),
-          subtitle: Row(
-            children: [
-              _AnimatedPulsingDot(
-                color:
-                    _isHardwareLive ? AppColors.statusSafe : AppColors.textGrey,
-                size: 6,
-              ),
-              const SizedBox(width: 8),
-              Text(
-                _isHardwareLive ? 'LIVE' : 'OFFLINE',
-                style: TextStyle(
-                  fontSize: 10,
-                  fontWeight: FontWeight.w900,
-                  letterSpacing: 0.5,
-                  color: _isHardwareLive
-                      ? AppColors.statusSafe
-                      : AppColors.textGrey,
+          trailing: widget.isReordering 
+            ? ReorderableDragStartListener(
+                index: widget.index,
+                child: Padding(
+                  padding: const EdgeInsets.all(8.0),
+                  child: Icon(Icons.drag_handle_rounded, color: Theme.of(context).colorScheme.onSurfaceVariant.withValues(alpha: 0.4)),
+                ),
+              )
+            : Container(
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                decoration: BoxDecoration(
+                  color: (isLive ? AppColors.statusSafe : AppColors.textGrey).withValues(alpha: 0.1),
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(
+                    color: (isLive ? AppColors.statusSafe : AppColors.textGrey).withValues(alpha: 0.2),
+                  ),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    _AnimatedPulsingDot(
+                      color: isLive ? AppColors.statusSafe : AppColors.textGrey,
+                      size: 6,
+                    ),
+                    const SizedBox(width: 6),
+                    Text(
+                      isLive ? 'ONLINE' : 'OFFLINE',
+                      style: TextStyle(
+                        fontSize: 10,
+                        fontWeight: FontWeight.w900,
+                        letterSpacing: 0.5,
+                        color: isLive ? AppColors.statusSafe : AppColors.textGrey,
+                      ),
+                    ),
+                  ],
                 ),
               ),
-              Text(
-                " · $_lastSeenText",
-                style: TextStyle(
-                  fontSize: 10,
-                  color: Theme.of(context)
-                      .colorScheme
-                      .onSurfaceVariant
-                      .withValues(alpha: 0.5),
-                  fontWeight: FontWeight.w500,
-                ),
+          children: widget.isReordering ? [] : [
+            const SizedBox(height: 8),
+            _buildHeartbeatCard(),
+            const SizedBox(height: 16),
+            
+            // Edit Fields
+            Text("DEVICE DETAILS", style: TextStyle(fontSize: 12, fontWeight: FontWeight.w800, letterSpacing: 1.2, color: Theme.of(context).colorScheme.onSurfaceVariant.withValues(alpha: 0.6))),
+            const SizedBox(height: 12),
+            TextField(
+              controller: _macCtrl,
+              style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
+              decoration: InputDecoration(
+                labelText: "MAC Address",
+                border: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: BorderSide.none),
+                filled: true,
+                fillColor: isDark ? Colors.black.withValues(alpha: 0.2) : Colors.white.withValues(alpha: 0.5),
+                isDense: true,
               ),
-            ],
-          ),
-          trailing: widget.isReordering
-              ? ReorderableDragStartListener(
-                  index: widget.index,
-                  child: Padding(
-                    padding: const EdgeInsets.all(8.0),
-                    child: Icon(Icons.drag_handle_rounded,
-                        color: Theme.of(context)
-                            .colorScheme
-                            .onSurfaceVariant
-                            .withValues(alpha: 0.4)),
-                  ),
-                )
-              : _buildStatusBadge(isOnline),
-          children: widget.isReordering
-              ? []
-              : [
-                  const SizedBox(height: 8),
-                  _buildHeartbeatCard(),
-                  const SizedBox(height: 12),
-                  _buildStatusToggle(isOnline),
-                  const SizedBox(height: 16),
-
-                  // Edit Fields
-                  Text("DEVICE DETAILS",
-                      style: TextStyle(
-                          fontSize: 12,
-                          fontWeight: FontWeight.w800,
-                          letterSpacing: 1.2,
-                          color: Theme.of(context)
-                              .colorScheme
-                              .onSurfaceVariant
-                              .withValues(alpha: 0.6))),
-                  const SizedBox(height: 12),
-                  TextField(
-                    controller: _macCtrl,
-                    style: const TextStyle(
-                        fontSize: 13, fontWeight: FontWeight.w600),
-                    decoration: InputDecoration(
-                      labelText: "MAC Address",
-                      border: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(10),
-                          borderSide: BorderSide.none),
-                      filled: true,
-                      fillColor: isDark
-                          ? Colors.black.withValues(alpha: 0.2)
-                          : Colors.white.withValues(alpha: 0.5),
-                      isDense: true,
+            ),
+            const SizedBox(height: 10),
+            TextField(
+              controller: _nameCtrl,
+              style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
+              decoration: InputDecoration(
+                labelText: "Location Name",
+                border: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: BorderSide.none),
+                filled: true,
+                fillColor: isDark ? Colors.black.withValues(alpha: 0.2) : Colors.white.withValues(alpha: 0.5),
+                isDense: true,
+              ),
+            ),
+            
+            const SizedBox(height: 24),
+            Text("SENSOR THRESHOLDS", style: TextStyle(fontSize: 12, fontWeight: FontWeight.w800, letterSpacing: 1.2, color: Theme.of(context).colorScheme.onSurfaceVariant.withValues(alpha: 0.6))),
+            const SizedBox(height: 16),
+            
+            _buildThresholdSlider("Temperature", _tempThresh, 30, 60, AppColors.statusDanger, "°C", (v) => setState(() => _tempThresh = v)),
+            _buildThresholdSlider("Smoke", _smokeThresh, 100, 500, AppColors.primaryBlue, "PPM", (v) => setState(() => _smokeThresh = v)),
+            _buildThresholdSlider("Flame", _flameThresh, 50, 500, AppColors.statusWarning, "PPM", (v) => setState(() => _flameThresh = v)),
+            
+            const SizedBox(height: 24),
+            Row(
+              children: [
+                Expanded(
+                  child: ElevatedButton(
+                    onPressed: () {
+                      widget.onSave(
+                         widget.device["macAddress"], 
+                         _macCtrl.text.trim(), 
+                         _nameCtrl.text.trim(), 
+                         {
+                            "temp_threshold": _tempThresh,
+                            "smoke_threshold": _smokeThresh,
+                            "flame_threshold": _flameThresh,
+                         }
+                      );
+                    },
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: AppColors.primaryBlue,
+                      foregroundColor: Colors.white,
+                      elevation: 0,
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                      padding: const EdgeInsets.symmetric(vertical: 12),
                     ),
+                    child: const Text("Save Changes", style: TextStyle(fontWeight: FontWeight.w800, fontSize: 13)),
                   ),
-                  const SizedBox(height: 10),
-                  TextField(
-                    controller: _nameCtrl,
-                    style: const TextStyle(
-                        fontSize: 13, fontWeight: FontWeight.w600),
-                    decoration: InputDecoration(
-                      labelText: "Location Name",
-                      border: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(10),
-                          borderSide: BorderSide.none),
-                      filled: true,
-                      fillColor: isDark
-                          ? Colors.black.withValues(alpha: 0.2)
-                          : Colors.white.withValues(alpha: 0.5),
-                      isDense: true,
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: OutlinedButton(
+                    onPressed: () => widget.onRemove(widget.device["macAddress"], widget.device["name"]),
+                    style: OutlinedButton.styleFrom(
+                      side: BorderSide(color: AppColors.statusDanger.withValues(alpha: 0.4), width: 1.5),
+                      foregroundColor: AppColors.statusDanger,
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                      padding: const EdgeInsets.symmetric(vertical: 12),
                     ),
+                    child: const Text("Remove", style: TextStyle(fontWeight: FontWeight.w800, fontSize: 13)),
                   ),
-
-                  const SizedBox(height: 24),
-                  Text("SENSOR THRESHOLDS",
-                      style: TextStyle(
-                          fontSize: 12,
-                          fontWeight: FontWeight.w800,
-                          letterSpacing: 1.2,
-                          color: Theme.of(context)
-                              .colorScheme
-                              .onSurfaceVariant
-                              .withValues(alpha: 0.6))),
-                  const SizedBox(height: 16),
-
-                  _buildThresholdSlider(
-                      "Temperature",
-                      _tempThresh,
-                      30,
-                      60,
-                      AppColors.statusDanger,
-                      "°C",
-                      (v) => setState(() => _tempThresh = v)),
-                  _buildThresholdSlider(
-                      "Smoke",
-                      _smokeThresh,
-                      100,
-                      500,
-                      AppColors.primaryBlue,
-                      "PPM",
-                      (v) => setState(() => _smokeThresh = v)),
-                  _buildThresholdSlider(
-                      "Flame",
-                      _flameThresh,
-                      50,
-                      500,
-                      AppColors.statusWarning,
-                      "PPM",
-                      (v) => setState(() => _flameThresh = v)),
-
-                  const SizedBox(height: 24),
-                  Row(
-                    children: [
-                      Expanded(
-                        child: ElevatedButton(
-                          onPressed: () {
-                            widget.onSave(widget.device["macAddress"],
-                                _macCtrl.text.trim(), _nameCtrl.text.trim(), {
-                              "temp_threshold": _tempThresh,
-                              "smoke_threshold": _smokeThresh,
-                              "flame_threshold": _flameThresh,
-                            });
-                          },
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: AppColors.primaryBlue,
-                            foregroundColor: Colors.white,
-                            elevation: 0,
-                            shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(12)),
-                            padding: const EdgeInsets.symmetric(vertical: 12),
-                          ),
-                          child: const Text("Save Changes",
-                              style: TextStyle(
-                                  fontWeight: FontWeight.w800, fontSize: 13)),
-                        ),
-                      ),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: OutlinedButton(
-                          onPressed: () => widget.onRemove(
-                              widget.device["macAddress"],
-                              widget.device["name"]),
-                          style: OutlinedButton.styleFrom(
-                            side: BorderSide(
-                                color: AppColors.statusDanger
-                                    .withValues(alpha: 0.4),
-                                width: 1.5),
-                            foregroundColor: AppColors.statusDanger,
-                            shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(12)),
-                            padding: const EdgeInsets.symmetric(vertical: 12),
-                          ),
-                          child: const Text("Remove",
-                              style: TextStyle(
-                                  fontWeight: FontWeight.w800, fontSize: 13)),
-                        ),
-                      ),
-                    ],
-                  ),
-                ],
+                ),
+              ],
+            ),
+          ],
         ),
       ),
     );
   }
 
-  Widget _buildThresholdSlider(String label, double value, double min,
-      double max, Color color, String unit, Function(double) onChange) {
+  Widget _buildThresholdSlider(String label, double value, double min, double max, Color color, String unit, Function(double) onChange) {
     return Column(
       children: [
         Row(
           mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: [
-            Text(label,
-                style:
-                    const TextStyle(fontWeight: FontWeight.w700, fontSize: 13)),
-            Text(
-                "${value.toStringAsFixed(label == 'Temperature' ? 1 : 0)} $unit",
-                style: TextStyle(
-                    fontWeight: FontWeight.w900, color: color, fontSize: 13)),
+            Text(label, style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 13)),
+            Text("${value.toStringAsFixed(label == 'Temperature' ? 1 : 0)} $unit", style: TextStyle(fontWeight: FontWeight.w900, color: color, fontSize: 13)),
           ],
         ),
         SliderTheme(
@@ -1050,45 +865,12 @@ class _EditableDeviceTileState extends State<_EditableDeviceTile> {
     );
   }
 
-  Widget _buildStatusBadge(bool isOnline) {
-    final color = isOnline ? AppColors.statusSafe : AppColors.textGrey;
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-      decoration: BoxDecoration(
-        color: color.withValues(alpha: 0.12),
-        borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: color.withValues(alpha: 0.2)),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          _AnimatedPulsingDot(color: color, size: 6.0),
-          const SizedBox(width: 8),
-          Text(
-            isOnline ? "POWER ON" : "POWER OFF",
-            style: TextStyle(
-              color: color,
-              fontSize: 10,
-              fontWeight: FontWeight.w900,
-              letterSpacing: 0.5,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
   Widget _buildHeartbeatCard() {
     final hwState = _hardwareState;
     final ip = widget.device['heartbeat_ip'];
     final firmware = widget.device['heartbeat_firmware'];
-    // We are now trusting the RTDB explicit string
     final isLive = hwState == 'CONNECTED';
-    final color = isLive
-        ? AppColors.statusSafe
-        : (hwState == 'DISCONNECTED'
-            ? AppColors.statusDanger
-            : AppColors.textGrey);
+    final color = isLive ? AppColors.statusSafe : (hwState == 'DISCONNECTED' ? AppColors.statusDanger : AppColors.textGrey);
 
     return Container(
       padding: const EdgeInsets.all(12),
@@ -1110,8 +892,7 @@ class _EditableDeviceTileState extends State<_EditableDeviceTile> {
               const SizedBox(width: 8),
               Text(
                 "ESP32 Hardware",
-                style: TextStyle(
-                    fontWeight: FontWeight.w700, fontSize: 14, color: color),
+                style: TextStyle(fontWeight: FontWeight.w700, fontSize: 14, color: color),
               ),
               const Spacer(),
               Container(
@@ -1136,14 +917,8 @@ class _EditableDeviceTileState extends State<_EditableDeviceTile> {
           Row(
             children: [
               _heartbeatDetail(Icons.access_time, 'Last Seen', _lastSeenText),
-              if (ip != null) ...[
-                const SizedBox(width: 16),
-                _heartbeatDetail(Icons.lan, 'IP', ip)
-              ],
-              if (firmware != null) ...[
-                const SizedBox(width: 16),
-                _heartbeatDetail(Icons.memory, 'FW', firmware)
-              ],
+              if (ip != null) ...[const SizedBox(width: 16), _heartbeatDetail(Icons.lan, 'IP', ip)],
+              if (firmware != null) ...[const SizedBox(width: 16), _heartbeatDetail(Icons.memory, 'FW', firmware)],
             ],
           ),
         ],
@@ -1155,137 +930,17 @@ class _EditableDeviceTileState extends State<_EditableDeviceTile> {
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: [
-        Icon(icon,
-            size: 12,
-            color: Theme.of(context)
-                .colorScheme
-                .onSurfaceVariant
-                .withValues(alpha: 0.7)),
+        Icon(icon, size: 12, color: Theme.of(context).colorScheme.onSurfaceVariant.withValues(alpha: 0.7)),
         const SizedBox(width: 4),
         Text(
           '$label: ',
-          style: TextStyle(
-              fontSize: 11,
-              color: Theme.of(context)
-                  .colorScheme
-                  .onSurfaceVariant
-                  .withValues(alpha: 0.7)),
+          style: TextStyle(fontSize: 11, color: Theme.of(context).colorScheme.onSurfaceVariant.withValues(alpha: 0.7)),
         ),
         Text(
           value,
-          style: TextStyle(
-              fontSize: 11,
-              fontWeight: FontWeight.w600,
-              color: Theme.of(context).colorScheme.onSurface),
+          style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: Theme.of(context).colorScheme.onSurface),
         ),
       ],
-    );
-  }
-
-  Widget _buildStatusToggle(bool isOnline) {
-    return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: Theme.of(context).colorScheme.surface.withValues(alpha: 0.5),
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(
-            color: Theme.of(context)
-                .colorScheme
-                .onSurface
-                .withValues(alpha: 0.06)),
-      ),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-        children: [
-          Row(
-            children: [
-              Icon(
-                isOnline ? Icons.power_rounded : Icons.power_off_rounded,
-                size: 22,
-                color: isOnline ? AppColors.statusSafe : AppColors.statusDanger,
-              ),
-              const SizedBox(width: 14),
-              Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const Text("Operation Power",
-                      style:
-                          TextStyle(fontWeight: FontWeight.w800, fontSize: 14)),
-                  const SizedBox(height: 2),
-                  Text(
-                    isOnline
-                        ? "Device is currently POWERED ON"
-                        : "Device is currently POWERED OFF",
-                    style: TextStyle(
-                      fontSize: 11,
-                      color: Theme.of(context)
-                          .colorScheme
-                          .onSurfaceVariant
-                          .withValues(alpha: 0.5),
-                      fontWeight: FontWeight.w500,
-                    ),
-                  ),
-                ],
-              ),
-            ],
-          ),
-          GestureDetector(
-            onTap: () {
-              widget.onStatusToggle(
-                  widget.device["macAddress"], isOnline ? "offline" : "online");
-            },
-            child: AnimatedContainer(
-              duration: const Duration(milliseconds: 250),
-              width: 58,
-              height: 30,
-              padding: const EdgeInsets.all(3),
-              decoration: BoxDecoration(
-                color: isOnline
-                    ? AppColors.statusSafe.withValues(alpha: 0.12)
-                    : AppColors.statusDanger.withValues(alpha: 0.12),
-                borderRadius: BorderRadius.circular(20),
-                border: Border.all(
-                  color: isOnline
-                      ? AppColors.statusSafe.withValues(alpha: 0.3)
-                      : AppColors.statusDanger.withValues(alpha: 0.25),
-                  width: 1.5,
-                ),
-              ),
-              child: AnimatedAlign(
-                duration: const Duration(milliseconds: 250),
-                alignment:
-                    isOnline ? Alignment.centerRight : Alignment.centerLeft,
-                curve: Curves.easeOutBack,
-                child: Container(
-                  width: 22,
-                  height: 22,
-                  decoration: BoxDecoration(
-                    color: isOnline
-                        ? AppColors.statusSafe
-                        : AppColors.statusDanger,
-                    shape: BoxShape.circle,
-                    boxShadow: [
-                      BoxShadow(
-                        color: (isOnline
-                                ? AppColors.statusSafe
-                                : AppColors.statusDanger)
-                            .withValues(alpha: 0.4),
-                        blurRadius: 4,
-                        offset: const Offset(0, 1),
-                      )
-                    ],
-                  ),
-                  child: Icon(
-                    Icons.power_settings_new_rounded,
-                    size: 13,
-                    color: Colors.white,
-                  ),
-                ),
-              ),
-            ),
-          )
-        ],
-      ),
     );
   }
 }
@@ -1300,8 +955,7 @@ class _AnimatedPulsingDot extends StatefulWidget {
   State<_AnimatedPulsingDot> createState() => _AnimatedPulsingDotState();
 }
 
-class _AnimatedPulsingDotState extends State<_AnimatedPulsingDot>
-    with SingleTickerProviderStateMixin {
+class _AnimatedPulsingDotState extends State<_AnimatedPulsingDot> with SingleTickerProviderStateMixin {
   late AnimationController _controller;
   late Animation<double> _animation;
 

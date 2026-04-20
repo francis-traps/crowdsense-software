@@ -4,8 +4,9 @@ import 'dart:ui' as ui;
 
 class PageTitle extends StatefulWidget {
   final String title;
+  final String? subtitle;
 
-  const PageTitle({super.key, required this.title});
+  const PageTitle({super.key, required this.title, this.subtitle});
 
   @override
   State<PageTitle> createState() => _PageTitleState();
@@ -47,22 +48,39 @@ class _PageTitleState extends State<PageTitle> with SingleTickerProviderStateMix
     return Row(
       crossAxisAlignment: CrossAxisAlignment.center,
       children: [
-        Text(
-          widget.title.toUpperCase(),
-          style: GoogleFonts.rajdhani(
-            fontSize: 34,
-            fontWeight: FontWeight.w800,
-            letterSpacing: 2.0,
-            color: colorScheme.onSurface,
-            shadows: [
-              // Soothing, soft ambient drop shadow
-              Shadow(
-                color: (isDark ? Colors.white : Colors.black).withValues(alpha: 0.08),
-                blurRadius: 12,
-                offset: const Offset(0, 4),
+        Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              widget.title.toUpperCase(),
+              style: GoogleFonts.rajdhani(
+                fontSize: 34,
+                fontWeight: FontWeight.w800,
+                letterSpacing: 2.0,
+                color: colorScheme.onSurface,
+                shadows: [
+                  Shadow(
+                    color: (isDark ? Colors.white : Colors.black).withValues(alpha: 0.08),
+                    blurRadius: 12,
+                    offset: const Offset(0, 4),
+                  ),
+                ],
+              ),
+            ),
+            if (widget.subtitle != null) ...[
+              const SizedBox(height: 0),
+              Text(
+                widget.subtitle!.toUpperCase(),
+                style: GoogleFonts.rajdhani(
+                  fontSize: 11,
+                  fontWeight: FontWeight.w700,
+                  color: colorScheme.onSurface.withValues(alpha: 0.4),
+                  letterSpacing: 1.2,
+                ),
               ),
             ],
-          ),
+          ],
         ),
         const SizedBox(width: 16),
         Expanded(

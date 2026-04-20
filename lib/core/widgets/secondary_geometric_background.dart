@@ -16,7 +16,7 @@ class SecondaryGeometricBackground extends StatelessWidget {
         Container(
           decoration: BoxDecoration(
             gradient: isDark 
-                ? const LinearGradient(colors: [Color(0xFF0F172A), Color(0xFF1E1E2C)], begin: Alignment.topLeft, end: Alignment.bottomRight)
+                ? LinearGradient(colors: [AppColors.backgroundDark, AppColors.surfaceDark], begin: Alignment.topLeft, end: Alignment.bottomRight)
                 : const LinearGradient(colors: [Color(0xFFF8FAFC), Color(0xFFF1F5F9)], begin: Alignment.topLeft, end: Alignment.bottomRight),
           ),
         ),
@@ -53,8 +53,8 @@ class _SecondaryGeometricPainter extends CustomPainter {
 
     paint.shader = LinearGradient(
       colors: [
-        AppColors.statusDanger.withValues(alpha: isDark ? 0.15 : 0.08),
-        AppColors.statusWarning.withValues(alpha: isDark ? 0.05 : 0.05),
+        AppColors.primaryBlue.withValues(alpha: isDark ? 0.12 : 0.08),
+        AppColors.accentCyan.withValues(alpha: isDark ? 0.05 : 0.04),
       ],
       begin: Alignment.bottomRight,
       end: Alignment.topLeft,
@@ -72,8 +72,8 @@ class _SecondaryGeometricPainter extends CustomPainter {
 
     paint.shader = LinearGradient(
       colors: [
-        Colors.deepPurpleAccent.withValues(alpha: isDark ? 0.12 : 0.1),
-        AppColors.primaryBlue.withValues(alpha: isDark ? 0.05 : 0.05),
+        AppColors.accentBlue.withValues(alpha: isDark ? 0.1 : 0.08),
+        AppColors.primaryBlue.withValues(alpha: isDark ? 0.04 : 0.03),
       ],
       begin: Alignment.topLeft,
       end: Alignment.bottomRight,

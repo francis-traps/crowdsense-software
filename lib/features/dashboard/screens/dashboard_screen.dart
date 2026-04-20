@@ -30,7 +30,7 @@ class DashboardScreen extends StatefulWidget {
 
 class _DashboardScreenState extends State<DashboardScreen>
     with SingleTickerProviderStateMixin {
-  final ScrollController _scrollController = ScrollController();
+  late final List<ScrollController> _tabScrollControllers = List.generate(5, (index) => ScrollController()..addListener(_onScroll));
   bool _isScrolled = false;
   bool _isBottomNavVisible = true;
   int _currentIndex = 0;
@@ -38,22 +38,25 @@ class _DashboardScreenState extends State<DashboardScreen>
   PageController? _overridePageController;
   int _currentOverrideIndex = 0;
   bool _showNotificationsPanel = false;
-
+  
   // --- Log State ---
   late List<DeviceLog> _deviceLogs;
-  final int _hazardLevel =
-      0; // 0 = Nominal, 1 = Caution, 2 = Critical (Mock ESP32 data)
+  int _hazardLevel = 0; // 0 = Nominal, 1 = Caution, 2 = Critical (Mock ESP32 data)
   Timer? _heartbeatTimer;
 
-  int get _onlineCount =>
-      _deviceData.where((d) => d['isOnline'] == true).length;
-  int get _offlineCount =>
-      _deviceData.where((d) => d['isOnline'] == false).length;
+  int get _onlineCount => _deviceData.where((d) => d['isOnline'] == true).length;
+  int get _offlineCount => _deviceData.where((d) => d['isOnline'] == false).length;
+
+  // --- User Presence State ---
+  StreamSubscription? _usersSubscription;
+  int _adminsOnline = 0;
+  int _facilitatorsOnline = 0;
 
   @override
   void initState() {
     super.initState();
     _listenToDeviceStreams();
+    _listenToUserPresence();
 
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) {
@@ -68,8 +71,7 @@ class _DashboardScreenState extends State<DashboardScreen>
         id: 'log1',
         icon: Icons.local_fire_department,
         title: "Flame Sensor - Main Entrance",
-        message:
-            "Triggered - Possible fire detected. Evacuation protocol standing by.",
+        message: "Triggered - Possible fire detected. Evacuation protocol standing by.",
         dateTime: now.subtract(const Duration(minutes: 5)),
         iconColor: AppColors.statusDanger,
         isUnread: true,
@@ -83,18 +85,14 @@ class _DashboardScreenState extends State<DashboardScreen>
         batteryPercentage: 82,
         relayTriggered: true,
         sirenActivated: true,
-        networkActions: [
-          'SMS alert dispatched to Security Office',
-          'Email notification sent to admin@crowdsense.ph'
-        ],
+        networkActions: ['SMS alert dispatched to Security Office', 'Email notification sent to admin@crowdsense.ph'],
         specificZone: 'Block A, Floor 1, Node CS-F-001',
       ),
       DeviceLog(
         id: 'log2',
         icon: Icons.thermostat,
         title: "Temp Sensor - Server Room",
-        message:
-            "High temperature detected (42°C). Cooling system engaged automatically.",
+        message: "High temperature detected (42°C). Cooling system engaged automatically.",
         dateTime: now.subtract(const Duration(minutes: 20)),
         iconColor: AppColors.statusDanger,
         isUnread: true,
@@ -115,8 +113,7 @@ class _DashboardScreenState extends State<DashboardScreen>
         id: 'log3',
         icon: Icons.smoking_rooms,
         title: "Smoke Sensor - Hallway A",
-        message:
-            "Smoke detected in proximity. Investigating false positive potential.",
+        message: "Smoke detected in proximity. Investigating false positive potential.",
         dateTime: now.subtract(const Duration(minutes: 45)),
         iconColor: AppColors.statusWarning,
         isUnread: false,
@@ -137,8 +134,7 @@ class _DashboardScreenState extends State<DashboardScreen>
         id: 'log4',
         icon: Icons.radar,
         title: "ToF - Parking Entrance",
-        message:
-            "Device offline - Connection lost to gateway. Attempting automated reboot.",
+        message: "Device offline - Connection lost to gateway. Attempting automated reboot.",
         dateTime: now.subtract(const Duration(hours: 2, minutes: 15)),
         iconColor: AppColors.statusWarning,
         isUnread: false,
@@ -173,27 +169,7 @@ class _DashboardScreenState extends State<DashboardScreen>
       ),
     ];
 
-    _scrollController.addListener(() {
-      if (_scrollController.offset > 50 && !_isScrolled) {
-        setState(() => _isScrolled = true);
-      } else if (_scrollController.offset <= 50 && _isScrolled) {
-        setState(() => _isScrolled = false);
-      }
 
-      if (_scrollController.position.userScrollDirection ==
-          ScrollDirection.reverse) {
-        if (_isBottomNavVisible) {
-          setState(() => _isBottomNavVisible = false);
-          context.read<SirenProvider>().setBottomNavVisibility(false);
-        }
-      } else if (_scrollController.position.userScrollDirection ==
-          ScrollDirection.forward) {
-        if (!_isBottomNavVisible) {
-          setState(() => _isBottomNavVisible = true);
-          context.read<SirenProvider>().setBottomNavVisibility(true);
-        }
-      }
-    });
 
     _overridePageController = PageController(viewportFraction: 0.68);
 
@@ -212,20 +188,57 @@ class _DashboardScreenState extends State<DashboardScreen>
     _heartbeatTimer?.cancel();
     _prototypeUnitsSubscription?.cancel();
     _sensorDataSubscription?.cancel();
+    _usersSubscription?.cancel();
     _pageController?.dispose();
     _overridePageController?.dispose();
-    _scrollController.dispose();
+    for (var controller in _tabScrollControllers) {
+      controller.dispose();
+    }
     super.dispose();
+  }
+
+  void _onScroll() {
+    if (!mounted) return;
+    final currentController = _tabScrollControllers[_currentIndex];
+    if (!currentController.hasClients) return;
+
+    if (currentController.offset > 50 && !_isScrolled) {
+      setState(() => _isScrolled = true);
+    } else if (currentController.offset <= 50 && _isScrolled) {
+      setState(() => _isScrolled = false);
+    }
+
+    if (currentController.position.userScrollDirection == ScrollDirection.reverse) {
+      if (_isBottomNavVisible) {
+        setState(() => _isBottomNavVisible = false);
+        context.read<SirenProvider>().setBottomNavVisibility(false);
+      }
+    } else if (currentController.position.userScrollDirection == ScrollDirection.forward) {
+      if (!_isBottomNavVisible) {
+        setState(() => _isBottomNavVisible = true);
+        context.read<SirenProvider>().setBottomNavVisibility(true);
+      }
+    }
+  }
+
+  Widget _buildTabScrollWrapper({required int index, required Widget child}) {
+    return SingleChildScrollView(
+      controller: _tabScrollControllers[index],
+      physics: const ClampingScrollPhysics(),
+      child: Padding(
+        padding: EdgeInsets.fromLTRB(
+            20,
+            MediaQuery.of(context).padding.top + kToolbarHeight + 10,
+            20,
+            index == 2 ? 0 : 100),
+        child: child,
+      ),
+    );
   }
 
   // Derived computed properties
   List<AppNotification> get _notifications {
-    return _deviceLogs
-        .where((log) =>
-            log.isUnread ||
-            log.currentStatus == 'Active' ||
-            log.currentStatus == 'Acknowledged')
-        .map((log) {
+    return _deviceLogs.where((log) => log.isUnread || log.currentStatus == 'Active' || log.currentStatus == 'Acknowledged').map((log) {
       final isUrgent = log.priority == 'High';
       return AppNotification(
         id: log.id,
@@ -244,8 +257,8 @@ class _DashboardScreenState extends State<DashboardScreen>
   bool get _hasUrgentNotification =>
       _notifications.any((n) => n.isUrgent && !n.isResolved);
 
-  bool get _hasAnyNotification => _notifications
-      .any((n) => (!n.isUrgent && !n.isRead) || (n.isUrgent && !n.isResolved));
+  bool get _hasAnyNotification =>
+      _notifications.any((n) => (!n.isUrgent && !n.isRead) || (n.isUrgent && !n.isResolved));
 
   void _markAsRead(String id) {
     setState(() {
@@ -314,28 +327,35 @@ class _DashboardScreenState extends State<DashboardScreen>
 
   void _listenToDeviceStreams() {
     final dbRef = FirebaseDatabase.instance.ref();
-
-    _prototypeUnitsSubscription =
-        dbRef.child('prototype_units').onValue.listen((event) {
+    
+    _prototypeUnitsSubscription = dbRef.child('prototype_units').onValue.listen((event) {
       if (event.snapshot.value is Map) {
-        final map = event.snapshot.value as Map;
-        setState(() {
-          map.forEach((key, val) {
-            final mac = key.toString();
-            final data = val as Map;
-            _deviceDataMap.putIfAbsent(mac, () => {});
-            _deviceDataMap[mac]!['location'] =
-                data['name']?.toString() ?? 'Unknown';
-
-            if (data.containsKey('heartbeat') && data['heartbeat'] is Map) {
-              final hbMap = data['heartbeat'] as Map;
-              _deviceDataMap[mac]!['last_seen'] = hbMap['last_seen'];
-            } else {
-              _deviceDataMap[mac]!['last_seen'] = null;
-            }
-          });
-          _syncDeviceDataList();
-        });
+         final map = event.snapshot.value as Map;
+         setState(() {
+            map.forEach((key, val) {
+               final mac = key.toString();
+               final data = val as Map;
+               _deviceDataMap.putIfAbsent(mac, () => {});
+               _deviceDataMap[mac]!['location'] = data['name']?.toString() ?? 'Unknown';
+               
+               int priority = 999;
+               if (data.containsKey('priority')) {
+                   priority = data['priority'] is int ? data['priority'] : int.tryParse(data['priority'].toString()) ?? 999;
+               } else if (data.containsKey('config') && data['config'] is Map && data['config'].containsKey('priority')) {
+                   final c = data['config'] as Map;
+                   priority = c['priority'] is int ? c['priority'] : int.tryParse(c['priority'].toString()) ?? 999;
+               }
+               _deviceDataMap[mac]!['priority'] = priority;
+               
+               if (data.containsKey('heartbeat') && data['heartbeat'] is Map) {
+                   final hbMap = data['heartbeat'] as Map;
+                   _deviceDataMap[mac]!['last_seen'] = hbMap['last_seen'];
+               } else {
+                   _deviceDataMap[mac]!['last_seen'] = null;
+               }
+            });
+            _syncDeviceDataList();
+         });
       } else {
         setState(() {
           _deviceDataMap.clear();
@@ -344,62 +364,118 @@ class _DashboardScreenState extends State<DashboardScreen>
       }
     });
 
-    _sensorDataSubscription =
-        dbRef.child('sensor_data').onValue.listen((event) {
+    _sensorDataSubscription = dbRef.child('sensor_data').onValue.listen((event) {
       if (event.snapshot.value is Map) {
-        final map = event.snapshot.value as Map;
-        setState(() {
-          map.forEach((key, val) {
-            final mac = key.toString();
-            final data = val as Map;
-            _deviceDataMap.putIfAbsent(mac, () => {});
-            _deviceDataMap[mac]!['mac'] = mac;
-            _deviceDataMap[mac]!['count'] = data['people_inside'] ?? 0;
-            _deviceDataMap[mac]!['entries'] = data['total_entries'] ?? 0;
-            _deviceDataMap[mac]!['exits'] = data['total_exits'] ?? 0;
-            _deviceDataMap[mac]!['last_updated'] = data['last_updated'];
-            _deviceDataMap[mac]!['last_reset_hour'] = data['last_reset_hour'];
-          });
-          _syncDeviceDataList();
-        });
+         final map = event.snapshot.value as Map;
+         setState(() {
+            map.forEach((key, val) {
+               final mac = key.toString();
+               final data = val as Map;
+               _deviceDataMap.putIfAbsent(mac, () => {});
+               _deviceDataMap[mac]!['mac'] = mac;
+               _deviceDataMap[mac]!['count'] = data['people_inside'] ?? 0;
+               _deviceDataMap[mac]!['entries'] = data['total_entries'] ?? 0;
+               _deviceDataMap[mac]!['exits'] = data['total_exits'] ?? 0;
+               _deviceDataMap[mac]!['last_updated'] = data['last_updated'];
+               _deviceDataMap[mac]!['last_reset_hour'] = data['last_reset_hour'];
+            });
+            _syncDeviceDataList();
+         });
       }
     });
   }
 
-  void _syncDeviceDataList() {
-    _deviceData = _deviceDataMap.values.map((v) {
-      String connState = v['connection_state']?.toString() ?? "NEVER SEEN";
-      bool isLive = false;
 
-      if (connState == "CONNECTED") {
-        isLive = true;
-      } else if (connState == "DISCONNECTED") {
-        isLive = false;
+  void _listenToUserPresence() {
+    final dbRef = FirebaseDatabase.instance.ref();
+    _usersSubscription = dbRef.child('users').onValue.listen((event) {
+      if (event.snapshot.value is Map) {
+        final Map<dynamic, dynamic> usersMap = event.snapshot.value as Map<dynamic, dynamic>;
+        int admins = 0;
+        int facilitators = 0;
+
+        usersMap.forEach((key, value) {
+          if (value is Map) {
+            final bool isOnline = value['isOnline'] == true || value['isOnline'] == 1;
+            final String role = (value['role']?.toString() ?? '').toLowerCase();
+
+            if (isOnline) {
+              if (role == 'admin') {
+                admins++;
+              } else if (role == 'facilitator') {
+                facilitators++;
+              }
+            }
+          }
+        });
+
+        if (mounted) {
+          setState(() {
+            _adminsOnline = admins;
+            _facilitatorsOnline = facilitators;
+          });
+        }
       } else {
-        // Fallback for older firmware without explicit connection_state
-        final lastSeen = v['last_seen'];
-        if (lastSeen != null) {
-          final ts = DateTime.fromMillisecondsSinceEpoch(
-              (lastSeen is int) ? lastSeen : (lastSeen as num).toInt());
-          isLive = DateTime.now().difference(ts).inSeconds < 60;
-          connState = isLive ? "CONNECTED" : "DISCONNECTED";
+        // Handle null or invalid data
+        if (mounted) {
+          setState(() {
+            _adminsOnline = 0;
+            _facilitatorsOnline = 0;
+          });
         }
       }
+    });
+  }
 
-      return {
-        'location': v['location'] ?? 'Unknown Node',
-        'mac': v['mac'] ?? '',
-        'count': v['count'] ?? 0,
-        'entries': v['entries'] ?? 0,
-        'exits': v['exits'] ?? 0,
-        'isOnline': isLive,
-        'connectionState': connState,
-        'last_updated': v['last_updated'],
-        'last_reset_hour': v['last_reset_hour'],
-      };
+
+  void _syncDeviceDataList() {
+    _deviceData = _deviceDataMap.values.map((v) {
+        String connState = v['connection_state']?.toString() ?? "NEVER SEEN";
+        bool isLive = false;
+
+        if (connState == "CONNECTED") {
+            isLive = true;
+        } else if (connState == "DISCONNECTED") {
+            isLive = false;
+        } else {
+            // Fallback for older firmware without explicit connection_state
+            final lastSeen = v['last_seen'];
+            if (lastSeen != null) {
+                final ts = DateTime.fromMillisecondsSinceEpoch((lastSeen is int) ? lastSeen : (lastSeen as num).toInt());
+                isLive = DateTime.now().difference(ts).inSeconds < 60;
+                connState = isLive ? "CONNECTED" : "DISCONNECTED";
+            }
+        }
+
+        return {
+           'location': v['location'] ?? 'Unknown Node',
+           'mac': v['mac'] ?? '',
+           'count': v['count'] ?? 0,
+           'entries': v['entries'] ?? 0,
+           'exits': v['exits'] ?? 0,
+           'isOnline': isLive,
+           'connectionState': connState,
+           'last_updated': v['last_updated'],
+           'last_reset_hour': v['last_reset_hour'],
+           'priority': v['priority'] ?? 999,
+        };
     }).toList();
+    
+    _deviceData.sort((a, b) {
+       final pA = a['priority'] as int;
+       final pB = b['priority'] as int;
+       return pA.compareTo(pB);
+    });
+    
     if (_deviceData.isNotEmpty && _selectedLocation.isEmpty) {
-      _selectedLocation = _deviceData.first['location'];
+       _selectedLocation = _deviceData.first['location'];
+    }
+
+    if (_deviceData.isNotEmpty && _pageController == null) {
+       final int realIndex = _deviceData.indexWhere((data) => data['location'] == _selectedLocation);
+       _pageController = PageController(
+         initialPage: 1000 * _deviceData.length + (realIndex != -1 ? realIndex : 0),
+       );
     }
   }
 
@@ -410,7 +486,7 @@ class _DashboardScreenState extends State<DashboardScreen>
     if (_isResettingCounts) return;
     final currentHour = DateTime.now().hour;
     final dbRef = FirebaseDatabase.instance.ref();
-
+    
     for (final device in _deviceData) {
       final bool isOnline = device['isOnline'] == true;
       if (!isOnline) continue;
@@ -468,16 +544,14 @@ class _DashboardScreenState extends State<DashboardScreen>
   }
 
   // Computed total across all sensors
-  int get _totalEntries => _deviceData.fold(
-      0, (sum, d) => sum + ((d['entries'] as num?)?.toInt() ?? 0));
-  int get _totalExits => _deviceData.fold(
-      0, (sum, d) => sum + ((d['exits'] as num?)?.toInt() ?? 0));
+  int get _totalEntries => _deviceData.fold(0, (sum, d) => sum + ((d['entries'] as num?)?.toInt() ?? 0));
+  int get _totalExits => _deviceData.fold(0, (sum, d) => sum + ((d['exits'] as num?)?.toInt() ?? 0));
   int get _totalPeopleInside => (_totalEntries - _totalExits).clamp(0, 99999);
 
   @override
   Widget build(BuildContext context) {
     final userProv = context.watch<UserProvider>();
-
+    
     return Scaffold(
       extendBody: true,
       extendBodyBehindAppBar: true,
@@ -525,15 +599,12 @@ class _DashboardScreenState extends State<DashboardScreen>
               margin: const EdgeInsets.symmetric(vertical: 6),
               padding: const EdgeInsets.symmetric(horizontal: 4),
               decoration: BoxDecoration(
-                color: Theme.of(context).brightness == Brightness.dark
-                    ? Colors.white.withValues(alpha: 0.05)
+                color: Theme.of(context).brightness == Brightness.dark 
+                    ? Colors.white.withValues(alpha: 0.05) 
                     : Colors.black.withValues(alpha: 0.03),
                 borderRadius: BorderRadius.circular(30),
                 border: Border.all(
-                  color: Theme.of(context)
-                      .colorScheme
-                      .onSurface
-                      .withValues(alpha: 0.08),
+                  color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.08),
                 ),
               ),
               child: Row(
@@ -574,10 +645,8 @@ class _DashboardScreenState extends State<DashboardScreen>
                     ),
                     color: Theme.of(context).colorScheme.surface,
                     icon: CircleAvatar(
-                      backgroundColor: Theme.of(context)
-                          .colorScheme
-                          .primary
-                          .withValues(alpha: 0.2),
+                      backgroundColor:
+                          Theme.of(context).colorScheme.primary.withValues(alpha: 0.2),
                       child: Icon(Icons.person,
                           color: Theme.of(context).colorScheme.primary),
                     ),
@@ -585,8 +654,7 @@ class _DashboardScreenState extends State<DashboardScreen>
                       if (value == 'account') {
                         Navigator.push(
                           context,
-                          MaterialPageRoute(
-                              builder: (context) => const ProfileScreen()),
+                          MaterialPageRoute(builder: (context) => const ProfileScreen()),
                         );
                       } else if (value == 'settings') {
                         setState(() => _currentIndex = 4);
@@ -599,8 +667,7 @@ class _DashboardScreenState extends State<DashboardScreen>
                               content: const Text("Log out of your account?"),
                               actions: [
                                 TextButton(
-                                  onPressed: () =>
-                                      Navigator.of(dialogContext).pop(),
+                                  onPressed: () => Navigator.of(dialogContext).pop(),
                                   child: const Text("Cancel"),
                                 ),
                                 TextButton(
@@ -618,8 +685,7 @@ class _DashboardScreenState extends State<DashboardScreen>
                                   },
                                   child: const Text(
                                     "Log Out",
-                                    style: TextStyle(
-                                        color: AppColors.statusDanger),
+                                    style: TextStyle(color: AppColors.statusDanger),
                                   ),
                                 ),
                               ],
@@ -628,8 +694,7 @@ class _DashboardScreenState extends State<DashboardScreen>
                         );
                       }
                     },
-                    itemBuilder: (BuildContext context) =>
-                        <PopupMenuEntry<String>>[
+                    itemBuilder: (BuildContext context) => <PopupMenuEntry<String>>[
                       PopupMenuItem<String>(
                         enabled: false,
                         padding: EdgeInsets.zero,
@@ -639,10 +704,8 @@ class _DashboardScreenState extends State<DashboardScreen>
                             const SizedBox(height: 12),
                             CircleAvatar(
                               radius: 22,
-                              backgroundColor: Theme.of(context)
-                                  .colorScheme
-                                  .primary
-                                  .withValues(alpha: 0.2),
+                              backgroundColor:
+                                  Theme.of(context).colorScheme.primary.withValues(alpha: 0.2),
                               child: Icon(Icons.person,
                                   size: 26,
                                   color: Theme.of(context).colorScheme.primary),
@@ -679,9 +742,7 @@ class _DashboardScreenState extends State<DashboardScreen>
                             Text('Profile Details',
                                 style: TextStyle(
                                     fontSize: 14,
-                                    color: Theme.of(context)
-                                        .colorScheme
-                                        .onSurface)),
+                                    color: Theme.of(context).colorScheme.onSurface)),
                           ],
                         ),
                       ),
@@ -690,8 +751,7 @@ class _DashboardScreenState extends State<DashboardScreen>
                         height: 40,
                         child: Row(
                           children: [
-                            Icon(Icons.logout,
-                                size: 20, color: AppColors.statusDanger),
+                            Icon(Icons.logout, size: 20, color: AppColors.statusDanger),
                             SizedBox(width: 12),
                             Text('Logout',
                                 style: TextStyle(
@@ -713,207 +773,170 @@ class _DashboardScreenState extends State<DashboardScreen>
         children: [
           // --- Main body ---
           GeometricBackground(
-            child: SingleChildScrollView(
-              controller: _scrollController,
-              physics:
-                  const ClampingScrollPhysics(), // Prevents bouncy overscroll that adds artificial length
-              child: Padding(
-                padding: EdgeInsets.fromLTRB(
-                    20,
-                    MediaQuery.of(context).padding.top + kToolbarHeight + 10,
-                    20,
-                    _currentIndex == 2
-                        ? 0
-                        : 100), // Significantly shortened bottom space for Siren Override tab
-                child: IndexedStack(
-                  index: _currentIndex,
-                  children: [
-                    // Index 0: Dashboard Content
-                    Column(
+            child: IndexedStack(
+              index: _currentIndex,
+              children: [
+                // Index 0: Dashboard Content
+                _buildTabScrollWrapper(
+                  index: 0,
+                  child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         PageTitle(
-                            key: ValueKey('Page_$_currentIndex'),
-                            title: "Dashboard"),
+                          key: ValueKey('Page_$_currentIndex'), 
+                          title: "Dashboard",
+                          subtitle: "Welcome, ${userProv.firstName}!",
+                        ),
                         const SizedBox(height: 12),
                         _buildStatsRow(),
                         const SizedBox(height: 12),
-                        _deviceData.isEmpty
-                            ? Container(
-                                width: double.infinity,
-                                padding: const EdgeInsets.symmetric(
-                                    vertical: 40, horizontal: 20),
-                                decoration: BoxDecoration(
-                                  color: Theme.of(context).brightness ==
-                                          Brightness.dark
-                                      ? Colors.white.withValues(alpha: 0.05)
-                                      : Colors.black.withValues(alpha: 0.05),
-                                  borderRadius: BorderRadius.circular(24),
-                                ),
-                                child: Column(
-                                    mainAxisAlignment: MainAxisAlignment.center,
-                                    children: [
-                                      Icon(Icons.sensors_off_rounded,
-                                          size: 48,
-                                          color: Theme.of(context)
-                                              .colorScheme
-                                              .onSurfaceVariant),
-                                      const SizedBox(height: 16),
-                                      Text("No Devices Connected",
-                                          style: TextStyle(
-                                              fontSize: 18,
-                                              fontWeight: FontWeight.bold,
-                                              color: Theme.of(context)
-                                                  .colorScheme
-                                                  .onSurface)),
-                                      const SizedBox(height: 8),
-                                      Text(
-                                          "Add your ESP32 prototype units\nin the Device Management tab to see live data.",
-                                          textAlign: TextAlign.center,
-                                          style: TextStyle(
-                                              color: Theme.of(context)
-                                                  .colorScheme
-                                                  .onSurfaceVariant)),
-                                    ]),
-                              )
-                            : Builder(builder: (context) {
-                                final int realIndex = _deviceData.indexWhere(
-                                    (data) =>
-                                        data['location'] == _selectedLocation);
-                                _pageController ??= PageController(
-                                  initialPage: 1000 * _deviceData.length +
-                                      (realIndex != -1 ? realIndex : 0),
-                                );
-                                return PeopleCounterCard(
-                                  deviceData: _deviceData,
-                                  currentIndex: realIndex != -1 ? realIndex : 0,
-                                  pageController: _pageController!,
-                                  onPageChanged: (index) {
-                                    setState(() {
-                                      _selectedLocation = _deviceData[index %
-                                          _deviceData.length]['location'];
-                                    });
-                                  },
-                                  onPrevious: () {
-                                    _pageController!.previousPage(
-                                      duration:
-                                          const Duration(milliseconds: 300),
-                                      curve: Curves.easeInOut,
-                                    );
-                                  },
-                                  onNext: () {
-                                    _pageController!.nextPage(
-                                      duration:
-                                          const Duration(milliseconds: 300),
-                                      curve: Curves.easeInOut,
-                                    );
-                                  },
-                                );
-                              }),
+                        _deviceData.isEmpty 
+                          ? Container(
+                              width: double.infinity,
+                              padding: const EdgeInsets.symmetric(vertical: 40, horizontal: 20),
+                              decoration: BoxDecoration(
+                                color: Theme.of(context).brightness == Brightness.dark 
+                                    ? Colors.white.withValues(alpha: 0.05) 
+                                    : Colors.black.withValues(alpha: 0.05),
+                                borderRadius: BorderRadius.circular(24),
+                              ),
+                              child: Column(
+                                mainAxisAlignment: MainAxisAlignment.center,
+                                children: [
+                                    Icon(Icons.sensors_off_rounded, size: 48, color: Theme.of(context).colorScheme.onSurfaceVariant),
+                                    const SizedBox(height: 16),
+                                    Text("No Devices Connected", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Theme.of(context).colorScheme.onSurface)),
+                                    const SizedBox(height: 8),
+                                    Text("Add your ESP32 prototype units\nin the Device Management tab to see live data.", textAlign: TextAlign.center, style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant)),
+                                ]
+                              ),
+                            )
+                          : Builder(builder: (context) {
+                          final int realIndex = _deviceData.indexWhere(
+                              (data) => data['location'] == _selectedLocation);
+                          return PeopleCounterCard(
+                            deviceData: _deviceData,
+                            currentIndex: realIndex != -1 ? realIndex : 0,
+                            pageController: _pageController!,
+                            onPageChanged: (index) {
+                              setState(() {
+                                _selectedLocation =
+                                    _deviceData[index % _deviceData.length]['location'];
+                              });
+                            },
+                            onPrevious: () {
+                              _pageController!.previousPage(
+                                duration: const Duration(milliseconds: 300),
+                                curve: Curves.easeInOut,
+                              );
+                            },
+                            onNext: () {
+                              _pageController!.nextPage(
+                                duration: const Duration(milliseconds: 300),
+                                curve: Curves.easeInOut,
+                              );
+                            },
+                          );
+                        }),
                         const SizedBox(height: 12),
                         _buildCrowdCountList(),
                         const SizedBox(height: 16),
                         Row(
                           children: [
-                            Expanded(
-                                child: _buildRoleCard(
-                                    context,
-                                    "Admins Online",
-                                    1,
-                                    Icons.admin_panel_settings,
-                                    AppColors.statusDanger)), // Red
+                            Expanded(child: _buildRoleCard(context, "Admins Online", _adminsOnline, Icons.admin_panel_settings, AppColors.statusDanger)), // Red
                             const SizedBox(width: 12),
-                            Expanded(
-                                child: _buildRoleCard(
-                                    context,
-                                    "Facilitators Online",
-                                    0,
-                                    Icons.support_agent,
-                                    AppColors.statusWarning)), // Orange
+                            Expanded(child: _buildRoleCard(context, "Facilitators Online", _facilitatorsOnline, Icons.support_agent, AppColors.statusWarning)), // Orange
                           ],
                         ),
                         const SizedBox(height: 16),
                         _buildShowUsersButton(context),
                       ],
                     ),
-                    // Index 1: Analytics
-                    AnalyticsScreen(activeIndex: _currentIndex),
-                    // Index 2 (Center): Alerts & Manual Siren Control
-                    Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        PageTitle(
-                            key: ValueKey('Page_$_currentIndex'),
-                            title: "Override Siren"),
-                        const SizedBox(height: 16),
-                        // Tactical command strip console
-                        _buildSirenCommandStrip(),
-                        const SizedBox(height: 12),
-                        Row(
-                          children: [
-                            Container(
-                              width: 3,
-                              height: 28,
-                              decoration: BoxDecoration(
-                                color: AppColors.primaryBlue,
-                                borderRadius: BorderRadius.circular(2),
-                                boxShadow: [
-                                  BoxShadow(
-                                    color: AppColors.primaryBlue
-                                        .withValues(alpha: 0.5),
-                                    blurRadius: 8,
-                                  ),
-                                ],
-                              ),
-                            ),
-                            const SizedBox(width: 12),
-                            Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(
-                                  "EMERGENCY OVERRIDES",
-                                  style: TextStyle(
-                                    fontSize: 13,
-                                    fontWeight: FontWeight.w900,
-                                    letterSpacing: 1.5,
-                                    color:
-                                        Theme.of(context).colorScheme.onSurface,
-                                  ),
-                                ),
-                                Text(
-                                  "MANUAL SIREN CONTROL CONSOLE",
-                                  style: TextStyle(
-                                    fontSize: 9,
-                                    fontWeight: FontWeight.w700,
-                                    letterSpacing: 1.2,
-                                    color: Theme.of(context)
-                                        .colorScheme
-                                        .onSurfaceVariant
-                                        .withValues(alpha: 0.5),
-                                  ),
+                ),
+                // Index 1: Analytics
+                _buildTabScrollWrapper(
+                  index: 1,
+                  child: AnalyticsScreen(activeIndex: _currentIndex),
+                ),
+                // Index 2 (Center): Alerts & Manual Siren Control
+                _buildTabScrollWrapper(
+                  index: 2,
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      PageTitle(
+                        key: ValueKey('Page_$_currentIndex'), 
+                        title: "Override Siren"
+                      ),
+                      const SizedBox(height: 16),
+                      // Tactical command strip console
+                      _buildSirenCommandStrip(),
+                      const SizedBox(height: 12),
+                      Row(
+                        children: [
+                          Container(
+                            width: 3,
+                            height: 28,
+                            decoration: BoxDecoration(
+                              color: AppColors.primaryBlue,
+                              borderRadius: BorderRadius.circular(2),
+                              boxShadow: [
+                                BoxShadow(
+                                  color: AppColors.primaryBlue.withValues(alpha: 0.5),
+                                  blurRadius: 8,
                                 ),
                               ],
                             ),
-                          ],
-                        ),
-                        const SizedBox(height: 4),
-                        _buildCircularOverrideCarousel(),
-                      ],
-                    ),
-                    DevicesScreen(
-                      logs: _deviceLogs,
-                      highlightedLogId: _highlightedLogId,
-                      highlightedItemKey: _highlightedItemKey,
-                      parentScrollController: _scrollController,
-                      onlineCount: _onlineCount,
-                      offlineCount: _offlineCount,
-                      activeIndex: _currentIndex,
-                    ),
-                    // Index 4: Settings
-                    SettingsScreen(activeIndex: _currentIndex),
-                  ],
+                          ),
+                          const SizedBox(width: 12),
+                          Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                "EMERGENCY OVERRIDES",
+                                style: TextStyle(
+                                  fontSize: 13,
+                                  fontWeight: FontWeight.w900,
+                                  letterSpacing: 1.5,
+                                  color: Theme.of(context).colorScheme.onSurface,
+                                ),
+                              ),
+                              Text(
+                                "MANUAL SIREN CONTROL CONSOLE",
+                                style: TextStyle(
+                                  fontSize: 9,
+                                  fontWeight: FontWeight.w700,
+                                  letterSpacing: 1.2,
+                                  color: Theme.of(context).colorScheme.onSurfaceVariant.withValues(alpha: 0.5),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 4),
+                      _buildCircularOverrideCarousel(),
+                    ],
+                  ),
                 ),
-              ),
+                _buildTabScrollWrapper(
+                  index: 3,
+                  child: DevicesScreen(
+                    logs: _deviceLogs,
+                    highlightedLogId: _highlightedLogId,
+                    highlightedItemKey: _highlightedItemKey,
+                    parentScrollController: _tabScrollControllers[3],
+                    onlineCount: _onlineCount,
+                    offlineCount: _offlineCount,
+                    activeIndex: _currentIndex,
+                  ),
+                ),
+                // Index 4: Settings
+                _buildTabScrollWrapper(
+                  index: 4,
+                  child: SettingsScreen(activeIndex: _currentIndex),
+                ),
+              ],
             ),
           ),
 
@@ -954,168 +977,134 @@ class _DashboardScreenState extends State<DashboardScreen>
               child: Stack(
                 clipBehavior: Clip.none,
                 children: [
-                  TweenAnimationBuilder<double>(
-                    tween: Tween<double>(
-                        begin: _currentIndex == 2 ? 1.0 : 0.0,
-                        end: _currentIndex == 2 ? 1.0 : 0.0),
-                    duration: const Duration(milliseconds: 250),
-                    curve: Curves.easeInOut,
-                    builder: (context, value, child) {
-                      return CustomPaint(
-                        size: Size(MediaQuery.of(context).size.width - 32, 90),
-                        painter: _AnimatedNavBarPainter(context, value),
-                      );
-                    },
-                  ),
-                  Positioned.fill(
-                    child: Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                      children: [
-                        _buildNavItem(
-                            icon: Icons.dashboard_outlined,
-                            label: "Dashboard",
-                            index: 0),
-                        _buildNavItem(
-                            icon: Icons.analytics_outlined,
-                            label: "Analytics",
-                            index: 1),
-                        Expanded(
-                          child: Column(
-                            mainAxisAlignment: MainAxisAlignment.end,
-                            children: [
-                              const SizedBox(height: 50),
-                              Text(
-                                "ALERTS",
-                                style: TextStyle(
-                                  fontSize: 9,
-                                  fontWeight: FontWeight.w900,
-                                  letterSpacing: 1.2,
-                                  color: _currentIndex == 2
-                                      ? AppColors.primaryBlue
-                                      : Colors.grey.withValues(alpha: 0.6),
-                                ),
-                              ),
-                              const SizedBox(height: 6),
-                              // Integrated Active Indicator for Alerts
-                              AnimatedOpacity(
-                                duration: const Duration(milliseconds: 300),
-                                opacity: _currentIndex == 2 ? 1.0 : 0.0,
-                                child: AnimatedScale(
-                                  scale: _currentIndex == 2 ? 1.0 : 0.5,
-                                  duration: const Duration(milliseconds: 300),
-                                  child: Container(
-                                    width: 20,
-                                    height: 2.5,
-                                    decoration: BoxDecoration(
-                                      borderRadius: BorderRadius.circular(10),
-                                      color: AppColors.primaryBlue,
-                                      boxShadow: [
-                                        BoxShadow(
-                                          color: AppColors.primaryBlue
-                                              .withValues(alpha: 0.6),
-                                          blurRadius: 8,
-                                          spreadRadius: 1,
-                                        ),
-                                      ],
+              TweenAnimationBuilder<double>(
+                tween: Tween<double>(begin: _currentIndex == 2 ? 1.0 : 0.0, end: _currentIndex == 2 ? 1.0 : 0.0),
+                duration: const Duration(milliseconds: 250),
+                curve: Curves.easeInOut,
+                builder: (context, value, child) {
+                  return CustomPaint(
+                    size: Size(MediaQuery.of(context).size.width - 32, 90),
+                    painter: _AnimatedNavBarPainter(context, value),
+                  );
+                },
+              ),
+              Positioned.fill(
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                  children: [
+                    _buildNavItem(icon: Icons.home_outlined, label: "Dashboard", index: 0),
+                    _buildNavItem(icon: Icons.analytics_outlined, label: "Analytics", index: 1),
+                    SizedBox(
+                      width: 80, 
+                      child: Column(
+                        mainAxisAlignment: MainAxisAlignment.end,
+                        children: [
+                          const SizedBox(height: 50),
+                          const SizedBox(height: 10),
+                          // Integrated Active Indicator for Alerts
+                          AnimatedOpacity(
+                            duration: const Duration(milliseconds: 300),
+                            opacity: _currentIndex == 2 ? 1.0 : 0.0,
+                            child: AnimatedScale(
+                              scale: _currentIndex == 2 ? 1.0 : 0.5,
+                              duration: const Duration(milliseconds: 300),
+                              child: Container(
+                                width: 20,
+                                height: 2.5,
+                                decoration: BoxDecoration(
+                                  borderRadius: BorderRadius.circular(10),
+                                  color: AppColors.primaryBlue,
+                                  boxShadow: [
+                                    BoxShadow(
+                                      color: AppColors.primaryBlue.withValues(alpha: 0.6),
+                                      blurRadius: 8,
+                                      spreadRadius: 1,
                                     ),
-                                  ),
+                                  ],
                                 ),
                               ),
-                            ],
+                            ),
                           ),
-                        ),
-                        _buildNavItem(
-                            icon: Icons.devices_other,
-                            label: "Devices",
-                            index: 3),
-                        _buildNavItem(
-                            icon: Icons.settings_outlined,
-                            label: "Settings",
-                            index: 4),
-                      ],
+                        ],
+                      ),
                     ),
-                  ),
-                  Positioned(
-                    top: -10,
-                    left: 0,
-                    right: 0,
-                    child: Center(
-                      child: GestureDetector(
-                        onTap: () {
-                          setState(() {
-                            _currentIndex = 2;
-                            _showNotificationsPanel = false;
-                          });
-                        },
-                        child: AnimatedScale(
-                          scale: _currentIndex == 2 ? 1.12 : 1.0,
-                          duration: const Duration(milliseconds: 250),
-                          curve: Curves.easeInOut,
-                          child: AnimatedContainer(
-                            duration: const Duration(milliseconds: 250),
-                            curve: Curves.easeInOut,
-                            width: 70, // Slightly larger
-                            height: 70,
+                    _buildNavItem(icon: Icons.devices_other, label: "Devices", index: 3),
+                    _buildNavItem(icon: Icons.settings_outlined, label: "Settings", index: 4),
+                  ],
+                ),
+              ),
+              Positioned(
+                top: -10,
+                left: MediaQuery.of(context).size.width / 2 - 16 - 32, // Parent is margin 16 left -> Center visually
+                child: GestureDetector(
+                  onTap: () {
+                    setState(() { _currentIndex = 2; _showNotificationsPanel = false; });
+                  },
+                    child: AnimatedScale(
+                      scale: _currentIndex == 2 ? 1.12 : 1.0,
+                      duration: const Duration(milliseconds: 250),
+                      curve: Curves.easeInOut,
+                      child: AnimatedContainer(
+                        duration: const Duration(milliseconds: 250),
+                        curve: Curves.easeInOut,
+                        width: 70, // Slightly larger
+                        height: 70,
+                        decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          gradient: RadialGradient(
+                            colors: [
+                              AppColors.accentBlue.withValues(alpha: 0.9),
+                              AppColors.primaryBlue,
+                              const Color(0xFF2563EB), // Darker shade of primaryBlue
+                            ],
+                            center: const Alignment(0, -0.2),
+                            radius: 1.0,
+                          ),
+                          boxShadow: [
+                            // Main shadow
+                            BoxShadow(
+                              color: AppColors.primaryBlue.withValues(alpha: _currentIndex == 2 ? 0.6 : 0.4),
+                              blurRadius: _currentIndex == 2 ? 24 : 14,
+                              offset: const Offset(0, 6),
+                              spreadRadius: _currentIndex == 2 ? 2 : 0,
+                            ),
+                            // Bloom glow (Animated smoothly via AnimatedContainer)
+                            BoxShadow(
+                              color: AppColors.primaryBlue.withValues(alpha: _currentIndex == 2 ? 0.35 : 0.0),
+                              blurRadius: _currentIndex == 2 ? 40 : 20,
+                              spreadRadius: _currentIndex == 2 ? 8 : 0,
+                            ),
+                            BoxShadow(
+                              color: Colors.black.withValues(alpha: 0.25),
+                              blurRadius: 4,
+                              offset: const Offset(0, 2),
+                            )
+                          ],
+                        ),
+                        child: Center(
+                          child: Container(
+                            width: 58,
+                            height: 58,
                             decoration: BoxDecoration(
                               shape: BoxShape.circle,
-                              gradient: RadialGradient(
-                                colors: [
-                                  AppColors.accentBlue.withValues(alpha: 0.9),
-                                  AppColors.primaryBlue,
-                                  const Color(
-                                      0xFF2563EB), // Darker shade of primaryBlue
-                                ],
-                                center: const Alignment(0, -0.2),
-                                radius: 1.0,
+                              border: Border.all(
+                                color: Colors.white.withValues(alpha: 0.25),
+                                width: 1.5,
                               ),
-                              boxShadow: [
-                                // Main shadow
-                                BoxShadow(
-                                  color: AppColors.primaryBlue.withValues(
-                                      alpha: _currentIndex == 2 ? 0.6 : 0.4),
-                                  blurRadius: _currentIndex == 2 ? 24 : 14,
-                                  offset: const Offset(0, 6),
-                                  spreadRadius: _currentIndex == 2 ? 2 : 0,
-                                ),
-                                // Bloom glow (Animated smoothly via AnimatedContainer)
-                                BoxShadow(
-                                  color: AppColors.primaryBlue.withValues(
-                                      alpha: _currentIndex == 2 ? 0.35 : 0.0),
-                                  blurRadius: _currentIndex == 2 ? 40 : 20,
-                                  spreadRadius: _currentIndex == 2 ? 8 : 0,
-                                ),
-                                BoxShadow(
-                                  color: Colors.black.withValues(alpha: 0.25),
-                                  blurRadius: 4,
-                                  offset: const Offset(0, 2),
-                                )
-                              ],
                             ),
-                            child: Center(
-                              child: Container(
-                                width: 58,
-                                height: 58,
-                                decoration: BoxDecoration(
-                                  shape: BoxShape.circle,
-                                  border: Border.all(
-                                    color: Colors.white.withValues(alpha: 0.25),
-                                    width: 1.5,
-                                  ),
-                                ),
-                                child: const Icon(
-                                  Icons.notifications_active_rounded,
-                                  color: Colors.white,
-                                  size: 32,
-                                ),
-                              ),
+                            child: const Icon(
+                              Icons.notifications_active_rounded,
+                              color: Colors.white,
+                              size: 32,
                             ),
                           ),
                         ),
                       ),
                     ),
                   ),
-                ],
-              ),
+                ),
+              ],
+            ),
             ),
           ),
         ],
@@ -1123,11 +1112,9 @@ class _DashboardScreenState extends State<DashboardScreen>
     );
   }
 
-  Widget _buildNavItem(
-      {required IconData icon, required String label, required int index}) {
+  Widget _buildNavItem({required IconData icon, required String label, required int index}) {
     final isSelected = _currentIndex == index;
-    final color =
-        isSelected ? AppColors.primaryBlue : Colors.grey.withValues(alpha: 0.9);
+    final color = isSelected ? AppColors.primaryBlue : Colors.grey.withValues(alpha: 0.9);
 
     return Expanded(
       child: GestureDetector(
@@ -1145,24 +1132,9 @@ class _DashboardScreenState extends State<DashboardScreen>
             AnimatedScale(
               scale: isSelected ? 1.15 : 1.0,
               duration: const Duration(milliseconds: 200),
-              child: Icon(icon,
-                  color: color,
-                  size: 24), // Slightly smaller icons for better balance
+              child: Icon(icon, color: color, size: 24), // Slightly smaller icons for better balance
             ),
-            const SizedBox(height: 6), // Increased spacing
-            Text(
-              label.toUpperCase(),
-              maxLines: 1,
-              overflow: TextOverflow.visible,
-              softWrap: false,
-              style: TextStyle(
-                color: color,
-                fontSize: 9,
-                fontWeight: isSelected ? FontWeight.w900 : FontWeight.w700,
-                letterSpacing: 1.1,
-              ),
-            ),
-            const SizedBox(height: 6),
+            const SizedBox(height: 16),
             // Integrated Active Indicator
             AnimatedOpacity(
               duration: const Duration(milliseconds: 300),
@@ -1230,7 +1202,7 @@ class _DashboardScreenState extends State<DashboardScreen>
         const SizedBox(height: 2),
         Container(
           width: double.infinity,
-          padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 6),
+          padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 5), // Reduced padding
           decoration: BoxDecoration(
             color: hazardColor.withValues(alpha: 0.15),
             borderRadius: BorderRadius.circular(8),
@@ -1241,21 +1213,26 @@ class _DashboardScreenState extends State<DashboardScreen>
           ),
           child: Row(
             mainAxisSize: MainAxisSize.max,
+            crossAxisAlignment: CrossAxisAlignment.start, // Align dot to the top of multi-line text
             children: [
-              _PulsingDot(color: hazardColor),
-              const SizedBox(width: 5),
+              Padding(
+                padding: const EdgeInsets.only(top: 2), // Nudge dot down slightly for alignment
+                child: _PulsingDot(color: hazardColor),
+              ),
+              const SizedBox(width: 4), 
               Flexible(
                 child: Text(
                   hazardLabel,
                   style: TextStyle(
-                    fontSize: 9.5,
+                    fontSize: 8.5,
                     fontWeight: FontWeight.w900,
                     color: hazardColor,
-                    letterSpacing: 0.3,
-                    height: 1.2,
+                    letterSpacing: 0.2,
+                    height: 1.1,
                   ),
-                  maxLines: 1,
+                  maxLines: 2, // Allow 2 lines
                   overflow: TextOverflow.ellipsis,
+                  softWrap: true, // Enable wrapping
                 ),
               ),
             ],
@@ -1344,7 +1321,7 @@ class _DashboardScreenState extends State<DashboardScreen>
               valueWidget: headcountBadge,
             ),
           ),
-          const SizedBox(width: 8),
+          const SizedBox(width: 6), // Reduced from 8
           Expanded(
             child: _buildGlassStatCard(
               title: "Current Hour\nExits",
@@ -1355,7 +1332,7 @@ class _DashboardScreenState extends State<DashboardScreen>
               valueWidget: exitsBadge,
             ),
           ),
-          const SizedBox(width: 8),
+          const SizedBox(width: 6), // Reduced from 8
           Expanded(
             child: _buildGlassStatCard(
               title: "Hazard Status",
@@ -1374,7 +1351,7 @@ class _DashboardScreenState extends State<DashboardScreen>
 
   Widget _buildSirenCommandStrip() {
     final isDark = Theme.of(context).brightness == Brightness.dark;
-
+    
     Color hazardColor;
     String hazardLabel;
     bool isPulsing = false;
@@ -1403,12 +1380,10 @@ class _DashboardScreenState extends State<DashboardScreen>
           width: double.infinity,
           height: 90,
           decoration: BoxDecoration(
-            color:
-                (isDark ? Colors.white : Colors.black).withValues(alpha: 0.04),
+            color: (isDark ? Colors.white : Colors.black).withValues(alpha: 0.04),
             borderRadius: BorderRadius.circular(20),
             border: Border.all(
-              color: (isDark ? Colors.white : Colors.black)
-                  .withValues(alpha: 0.08),
+              color: (isDark ? Colors.white : Colors.black).withValues(alpha: 0.08),
               width: 1.0,
             ),
           ),
@@ -1434,10 +1409,7 @@ class _DashboardScreenState extends State<DashboardScreen>
                                 fontSize: 10,
                                 fontWeight: FontWeight.w800,
                                 letterSpacing: 1.2,
-                                color: Theme.of(context)
-                                    .colorScheme
-                                    .onSurfaceVariant
-                                    .withValues(alpha: 0.6),
+                                color: Theme.of(context).colorScheme.onSurfaceVariant.withValues(alpha: 0.6),
                               ),
                               maxLines: 1,
                               overflow: TextOverflow.ellipsis,
@@ -1459,7 +1431,7 @@ class _DashboardScreenState extends State<DashboardScreen>
                   ),
                 ),
               ),
-
+              
               // Zone 2: Status Bay
               Expanded(
                 flex: 1,
@@ -1475,15 +1447,11 @@ class _DashboardScreenState extends State<DashboardScreen>
                           fontSize: 8,
                           fontWeight: FontWeight.w900,
                           letterSpacing: 1.0,
-                          color: Theme.of(context)
-                              .colorScheme
-                              .onSurfaceVariant
-                              .withValues(alpha: 0.5),
+                          color: Theme.of(context).colorScheme.onSurfaceVariant.withValues(alpha: 0.5),
                         ),
                       ),
                       const SizedBox(height: 8),
-                      _buildSirenStatusCapsule(
-                          hazardLabel, hazardColor, isPulsing),
+                      _buildSirenStatusCapsule(hazardLabel, hazardColor, isPulsing),
                     ],
                   ),
                 ),
@@ -1542,8 +1510,12 @@ class _DashboardScreenState extends State<DashboardScreen>
     bool isTextSmall = false,
     Widget? valueWidget,
   }) {
+    final bool isNarrow = MediaQuery.of(context).size.width < 400;
     Widget cardChild = Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 12),
+      padding: EdgeInsets.symmetric(
+        horizontal: isNarrow ? 6 : 10, 
+        vertical: isNarrow ? 10 : 12,
+      ),
       decoration: BoxDecoration(
         color: color.withValues(alpha: isDark ? 0.15 : 0.08),
         borderRadius: BorderRadius.circular(16),
@@ -1573,20 +1545,19 @@ class _DashboardScreenState extends State<DashboardScreen>
               height: 1.2,
             ),
           ),
-          const Spacer(),
+          const SizedBox(height: 12),
           // Use the custom valueWidget (e.g. badge) if provided, else plain text
-          valueWidget ??
-              Text(
-                value,
-                style: TextStyle(
-                  fontSize: isTextSmall ? 13 : 24,
-                  fontWeight: FontWeight.w900,
-                  color: Theme.of(context).colorScheme.onSurface,
-                  height: 1.1,
-                ),
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
-              ),
+          valueWidget ?? Text(
+            value,
+            style: TextStyle(
+              fontSize: isTextSmall ? 13 : 24,
+              fontWeight: FontWeight.w900,
+              color: Theme.of(context).colorScheme.onSurface,
+              height: 1.1,
+            ),
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+          ),
         ],
       ),
     );
@@ -1605,8 +1576,7 @@ class _DashboardScreenState extends State<DashboardScreen>
     return glassWrapper;
   }
 
-  Widget _buildCompactStat(
-      {required IconData icon, required int value, required Color color}) {
+  Widget _buildCompactStat({required IconData icon, required int value, required Color color}) {
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: [
@@ -1678,6 +1648,13 @@ class _DashboardScreenState extends State<DashboardScreen>
         'isReset': false,
       },
       {
+        'title': "SAFETY ALERT",
+        'subtitle': "Activate blue visual strobe for advisory signalling",
+        'icon': Icons.light_mode_rounded,
+        'color': AppColors.primaryBlue,
+        'isReset': false,
+      },
+      {
         'title': "RESET ALL ALARMS",
         'subtitle': "Cancel all active sirens and visual alerts",
         'icon': Icons.refresh_rounded,
@@ -1692,14 +1669,13 @@ class _DashboardScreenState extends State<DashboardScreen>
           height: 450,
           child: PageView.builder(
             controller: _overridePageController,
-            onPageChanged: (index) =>
-                setState(() => _currentOverrideIndex = index),
+            onPageChanged: (index) => setState(() => _currentOverrideIndex = index),
             itemCount: overrides.length,
             clipBehavior: Clip.none,
             itemBuilder: (context, index) {
               final item = overrides[index];
               final isSelected = _currentOverrideIndex == index;
-
+              
               return AnimatedScale(
                 scale: isSelected ? 1.0 : 0.85,
                 duration: const Duration(milliseconds: 300),
@@ -1720,11 +1696,10 @@ class _DashboardScreenState extends State<DashboardScreen>
                   },
                   onTrigger: () {
                     if (!mounted) return;
-
+                    
                     // If this siren is already active, skip confirmation and show control dialog
                     final sirenProvider = context.read<SirenProvider>();
-                    if (sirenProvider.activeSirenTitle == item['title'] &&
-                        !item['isReset']) {
+                    if (sirenProvider.activeSirenTitle == item['title'] && !item['isReset']) {
                       SirenActiveDialog.show(context, sirenProvider);
                       return;
                     }
@@ -1734,11 +1709,9 @@ class _DashboardScreenState extends State<DashboardScreen>
                       context: context,
                       barrierDismissible: true,
                       builder: (context) {
-                        final isDark =
-                            Theme.of(context).brightness == Brightness.dark;
+                        final isDark = Theme.of(context).brightness == Brightness.dark;
                         return AlertDialog(
-                          backgroundColor:
-                              isDark ? const Color(0xFF1E2433) : Colors.white,
+                          backgroundColor: isDark ? const Color(0xFF1E2433) : Colors.white,
                           elevation: 20,
                           shape: RoundedRectangleBorder(
                             borderRadius: BorderRadius.circular(24),
@@ -1755,15 +1728,14 @@ class _DashboardScreenState extends State<DashboardScreen>
                                   color: item['color'].withValues(alpha: 0.1),
                                   shape: BoxShape.circle,
                                 ),
-                                child: Icon(Icons.security_rounded,
-                                    color: item['color'], size: 32),
+                                child: Icon(Icons.security_rounded, color: item['color'], size: 32),
                               ),
                               const SizedBox(height: 16),
                               Text(
                                 "COMMAND AUTHORIZATION",
                                 style: TextStyle(
-                                  fontWeight: FontWeight.w900,
-                                  fontSize: 18,
+                                  fontWeight: FontWeight.w900, 
+                                  fontSize: 18, 
                                   letterSpacing: 2.0,
                                   color: isDark ? Colors.white : Colors.black87,
                                 ),
@@ -1788,73 +1760,49 @@ class _DashboardScreenState extends State<DashboardScreen>
                                 "Are you sure you want to $actionText the\n'${item['title']}'?\n\nThis command will be logged and executed immediately across all active zones.",
                                 textAlign: TextAlign.center,
                                 style: TextStyle(
-                                  fontSize: 14,
+                                  fontSize: 14, 
                                   height: 1.5,
-                                  color:
-                                      isDark ? Colors.white70 : Colors.black54,
+                                  color: isDark ? Colors.white70 : Colors.black54,
                                 ),
                               ),
                             ],
                           ),
                           actionsAlignment: MainAxisAlignment.center,
-                          actionsPadding:
-                              const EdgeInsets.fromLTRB(20, 0, 20, 24),
+                          actionsPadding: const EdgeInsets.fromLTRB(20, 0, 20, 24),
                           actions: [
                             (() {
                               bool isHovered = false;
                               return StatefulBuilder(
                                 builder: (context, setState) {
                                   return MouseRegion(
-                                    onEnter: (_) =>
-                                        setState(() => isHovered = true),
-                                    onExit: (_) =>
-                                        setState(() => isHovered = false),
+                                    onEnter: (_) => setState(() => isHovered = true),
+                                    onExit: (_) => setState(() => isHovered = false),
                                     child: AnimatedContainer(
-                                      duration:
-                                          const Duration(milliseconds: 200),
+                                      duration: const Duration(milliseconds: 200),
                                       decoration: BoxDecoration(
                                         borderRadius: BorderRadius.circular(12),
-                                        color: isHovered
-                                            ? (isDark
-                                                ? Colors.white
-                                                    .withValues(alpha: 0.05)
-                                                : Colors.black
-                                                    .withValues(alpha: 0.03))
+                                        color: isHovered 
+                                            ? (isDark ? Colors.white.withValues(alpha: 0.05) : Colors.black.withValues(alpha: 0.03)) 
                                             : Colors.transparent,
                                         border: Border.all(
-                                          color: isHovered
-                                              ? (isDark
-                                                  ? Colors.white
-                                                      .withValues(alpha: 0.3)
-                                                  : Colors.black
-                                                      .withValues(alpha: 0.2))
-                                              : (isDark
-                                                  ? Colors.white
-                                                      .withValues(alpha: 0.1)
-                                                  : Colors.black
-                                                      .withValues(alpha: 0.1)),
+                                          color: isHovered 
+                                              ? (isDark ? Colors.white.withValues(alpha: 0.3) : Colors.black.withValues(alpha: 0.2))
+                                              : (isDark ? Colors.white.withValues(alpha: 0.1) : Colors.black.withValues(alpha: 0.1)),
                                           width: 1,
                                         ),
                                       ),
                                       child: TextButton(
                                         onPressed: () => Navigator.pop(context),
                                         style: TextButton.styleFrom(
-                                          padding: const EdgeInsets.symmetric(
-                                              horizontal: 20, vertical: 12),
-                                          overlayColor: isDark
-                                              ? Colors.white10
-                                              : Colors.black12,
+                                          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+                                          overlayColor: isDark ? Colors.white10 : Colors.black12,
                                         ),
                                         child: Text(
-                                          "ABORT",
+                                          "ABORT", 
                                           style: TextStyle(
-                                            color: isHovered
-                                                ? (isDark
-                                                    ? Colors.white70
-                                                    : Colors.black87)
-                                                : (isDark
-                                                    ? Colors.white38
-                                                    : Colors.grey[600]),
+                                            color: isHovered 
+                                                ? (isDark ? Colors.white70 : Colors.black87)
+                                                : (isDark ? Colors.white38 : Colors.grey[600]), 
                                             fontWeight: FontWeight.w900,
                                             letterSpacing: 1.5,
                                             fontSize: 12,
@@ -1871,21 +1819,14 @@ class _DashboardScreenState extends State<DashboardScreen>
                               onPressed: () {
                                 Navigator.pop(context);
                                 if (!item['isReset']) {
-                                  context.read<SirenProvider>().activateSiren(
-                                      item['title'],
-                                      item['icon'],
-                                      item['color']);
-                                  SirenActiveDialog.show(
-                                      context, context.read<SirenProvider>());
+                                  context.read<SirenProvider>().activateSiren(item['title'], item['icon'], item['color']);
+                                  SirenActiveDialog.show(context, context.read<SirenProvider>());
                                 } else {
-                                  context
-                                      .read<SirenProvider>()
-                                      .terminateSiren();
+                                  context.read<SirenProvider>().terminateSiren();
                                   CustomNotificationModal.show(
                                     context: context,
                                     title: "SYSTEM RESET",
-                                    message:
-                                        "${item['title']} has been successfully DEACTIVATED.",
+                                    message: "${item['title']} has been successfully DEACTIVATED.",
                                     isSuccess: true,
                                     customColor: item['color'],
                                     customIcon: item['icon'],
@@ -1895,18 +1836,15 @@ class _DashboardScreenState extends State<DashboardScreen>
                               style: ElevatedButton.styleFrom(
                                 backgroundColor: item['color'],
                                 foregroundColor: Colors.white,
-                                padding: const EdgeInsets.symmetric(
-                                    vertical: 16, horizontal: 24),
+                                padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 24),
                                 elevation: 8,
-                                shadowColor:
-                                    item['color'].withValues(alpha: 0.5),
-                                shape: RoundedRectangleBorder(
-                                    borderRadius: BorderRadius.circular(12)),
+                                shadowColor: item['color'].withValues(alpha: 0.5),
+                                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
                               ),
                               child: Text(
-                                actionText,
+                                actionText, 
                                 style: const TextStyle(
-                                  fontWeight: FontWeight.w900,
+                                  fontWeight: FontWeight.w900, 
                                   letterSpacing: 1.5,
                                   fontSize: 12,
                                 ),
@@ -1933,12 +1871,9 @@ class _DashboardScreenState extends State<DashboardScreen>
               height: 4,
               width: isSelected ? 20 : 8,
               decoration: BoxDecoration(
-                color: isSelected
-                    ? overrides[index]['color']
-                    : Theme.of(context)
-                        .colorScheme
-                        .onSurface
-                        .withValues(alpha: 0.1),
+                color: isSelected 
+                    ? overrides[index]['color'] 
+                    : Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.1),
                 borderRadius: BorderRadius.circular(2),
               ),
             );
@@ -1962,12 +1897,10 @@ class _DashboardScreenState extends State<DashboardScreen>
           width: double.infinity,
           padding: const EdgeInsets.all(24),
           decoration: BoxDecoration(
-            color:
-                (isDark ? Colors.white : Colors.black).withValues(alpha: 0.04),
+            color: (isDark ? Colors.white : Colors.black).withValues(alpha: 0.04),
             borderRadius: BorderRadius.circular(24),
             border: Border.all(
-              color: (isDark ? Colors.white : Colors.black)
-                  .withValues(alpha: 0.08),
+              color: (isDark ? Colors.white : Colors.black).withValues(alpha: 0.08),
               width: 1.0,
             ),
           ),
@@ -1984,8 +1917,7 @@ class _DashboardScreenState extends State<DashboardScreen>
                         fontSize: 11,
                         fontWeight: FontWeight.w800,
                         letterSpacing: 1.2,
-                        color:
-                            colorScheme.onSurfaceVariant.withValues(alpha: 0.6),
+                        color: colorScheme.onSurfaceVariant.withValues(alpha: 0.6),
                       ),
                     ),
                   ),
@@ -1995,12 +1927,9 @@ class _DashboardScreenState extends State<DashboardScreen>
                     child: Container(
                       padding: const EdgeInsets.all(8),
                       decoration: BoxDecoration(
-                        color: (isDark ? Colors.white : Colors.black)
-                            .withValues(alpha: 0.05),
+                        color: (isDark ? Colors.white : Colors.black).withValues(alpha: 0.05),
                         shape: BoxShape.circle,
-                        border: Border.all(
-                            color: (isDark ? Colors.white : Colors.black)
-                                .withValues(alpha: 0.1)),
+                        border: Border.all(color: (isDark ? Colors.white : Colors.black).withValues(alpha: 0.1)),
                       ),
                       child: Icon(Icons.north_east_rounded,
                           color: colorScheme.onSurfaceVariant, size: 16),
@@ -2018,8 +1947,7 @@ class _DashboardScreenState extends State<DashboardScreen>
                             fontWeight: FontWeight.w800,
                             fontSize: 10,
                             letterSpacing: 0.8,
-                            color: colorScheme.onSurfaceVariant
-                                .withValues(alpha: 0.5))),
+                            color: colorScheme.onSurfaceVariant.withValues(alpha: 0.5))),
                   ),
                   Expanded(
                     child: Text("ENTRY",
@@ -2028,8 +1956,7 @@ class _DashboardScreenState extends State<DashboardScreen>
                             fontWeight: FontWeight.w800,
                             fontSize: 10,
                             letterSpacing: 0.8,
-                            color: colorScheme.onSurfaceVariant
-                                .withValues(alpha: 0.5))),
+                            color: colorScheme.onSurfaceVariant.withValues(alpha: 0.5))),
                   ),
                   Expanded(
                     child: Text("EXIT",
@@ -2038,16 +1965,13 @@ class _DashboardScreenState extends State<DashboardScreen>
                             fontWeight: FontWeight.w800,
                             fontSize: 10,
                             letterSpacing: 0.8,
-                            color: colorScheme.onSurfaceVariant
-                                .withValues(alpha: 0.5))),
+                            color: colorScheme.onSurfaceVariant.withValues(alpha: 0.5))),
                   ),
                 ],
               ),
               const SizedBox(height: 12),
               Divider(
-                  color: (isDark ? Colors.white : Colors.black)
-                      .withValues(alpha: 0.06),
-                  height: 1),
+                  color: (isDark ? Colors.white : Colors.black).withValues(alpha: 0.06), height: 1),
               const SizedBox(height: 12),
               ListView.separated(
                 padding: EdgeInsets.zero,
@@ -2083,8 +2007,7 @@ class _DashboardScreenState extends State<DashboardScreen>
                         child: Text(exits.toString(),
                             textAlign: TextAlign.center,
                             style: TextStyle(
-                              color:
-                                  colorScheme.onSurface.withValues(alpha: 0.7),
+                              color: colorScheme.onSurface.withValues(alpha: 0.7),
                               fontWeight: FontWeight.w800,
                               fontSize: 14,
                             )),
@@ -2121,34 +2044,28 @@ class _DashboardScreenState extends State<DashboardScreen>
           curve: Curves.easeOutBack,
           builder: (context, double animValue, child) {
             return BackdropFilter(
-              filter: ImageFilter.blur(
-                  sigmaX: 8.0 * animValue, sigmaY: 8.0 * animValue),
+              filter: ImageFilter.blur(sigmaX: 8.0 * animValue, sigmaY: 8.0 * animValue),
               child: Opacity(
                 opacity: animValue.clamp(0.0, 1.0),
                 child: Transform.scale(
                   scale: 0.85 + (0.15 * animValue),
                   child: Dialog(
                     backgroundColor: Colors.transparent,
-                    insetPadding: const EdgeInsets.symmetric(
-                        horizontal: 16, vertical: 32),
+                    insetPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 32),
                     child: Container(
                       constraints: BoxConstraints(
                         maxHeight: MediaQuery.of(context).size.height * 0.78,
                         maxWidth: 500,
                       ),
                       decoration: BoxDecoration(
-                        color: colorScheme.surface
-                            .withValues(alpha: isDark ? 0.92 : 0.97),
+                        color: colorScheme.surface.withValues(alpha: isDark ? 0.92 : 0.97),
                         borderRadius: BorderRadius.circular(28),
                         border: Border.all(
-                          color: isDark
-                              ? Colors.white.withValues(alpha: 0.08)
-                              : Colors.black.withValues(alpha: 0.06),
+                          color: isDark ? Colors.white.withValues(alpha: 0.08) : Colors.black.withValues(alpha: 0.06),
                         ),
                         boxShadow: [
                           BoxShadow(
-                            color: Colors.black
-                                .withValues(alpha: isDark ? 0.5 : 0.15),
+                            color: Colors.black.withValues(alpha: isDark ? 0.5 : 0.15),
                             blurRadius: 30,
                             offset: const Offset(0, 12),
                           ),
@@ -2165,18 +2082,15 @@ class _DashboardScreenState extends State<DashboardScreen>
                                 Container(
                                   padding: const EdgeInsets.all(10),
                                   decoration: BoxDecoration(
-                                    color: AppColors.primaryBlue
-                                        .withValues(alpha: 0.12),
+                                    color: AppColors.primaryBlue.withValues(alpha: 0.12),
                                     shape: BoxShape.circle,
                                   ),
-                                  child: const Icon(Icons.groups_rounded,
-                                      color: AppColors.primaryBlue, size: 22),
+                                  child: const Icon(Icons.groups_rounded, color: AppColors.primaryBlue, size: 22),
                                 ),
                                 const SizedBox(width: 14),
                                 Expanded(
                                   child: Column(
-                                    crossAxisAlignment:
-                                        CrossAxisAlignment.start,
+                                    crossAxisAlignment: CrossAxisAlignment.start,
                                     children: [
                                       Text(
                                         "Crowd Count Details",
@@ -2191,8 +2105,7 @@ class _DashboardScreenState extends State<DashboardScreen>
                                         "${_deviceData.length} sensor${_deviceData.length == 1 ? '' : 's'} registered",
                                         style: TextStyle(
                                           fontSize: 12,
-                                          color: colorScheme.onSurfaceVariant
-                                              .withValues(alpha: 0.6),
+                                          color: colorScheme.onSurfaceVariant.withValues(alpha: 0.6),
                                           fontWeight: FontWeight.w500,
                                         ),
                                       ),
@@ -2201,16 +2114,10 @@ class _DashboardScreenState extends State<DashboardScreen>
                                 ),
                                 IconButton(
                                   onPressed: () => Navigator.pop(dialogContext),
-                                  icon: Icon(Icons.close_rounded,
-                                      color: colorScheme.onSurfaceVariant,
-                                      size: 22),
+                                  icon: Icon(Icons.close_rounded, color: colorScheme.onSurfaceVariant, size: 22),
                                   style: IconButton.styleFrom(
-                                    backgroundColor: isDark
-                                        ? Colors.white.withValues(alpha: 0.05)
-                                        : Colors.black.withValues(alpha: 0.04),
-                                    shape: RoundedRectangleBorder(
-                                        borderRadius:
-                                            BorderRadius.circular(12)),
+                                    backgroundColor: isDark ? Colors.white.withValues(alpha: 0.05) : Colors.black.withValues(alpha: 0.04),
+                                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
                                   ),
                                 ),
                               ],
@@ -2223,33 +2130,20 @@ class _DashboardScreenState extends State<DashboardScreen>
                           Padding(
                             padding: const EdgeInsets.symmetric(horizontal: 24),
                             child: Container(
-                              padding: const EdgeInsets.symmetric(
-                                  horizontal: 16, vertical: 12),
+                              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
                               decoration: BoxDecoration(
                                 gradient: LinearGradient(
                                   colors: anyOnline
-                                      ? [
-                                          AppColors.statusWarning
-                                              .withValues(alpha: 0.10),
-                                          AppColors.statusWarning
-                                              .withValues(alpha: 0.04)
-                                        ]
-                                      : [
-                                          colorScheme.onSurfaceVariant
-                                              .withValues(alpha: 0.06),
-                                          colorScheme.onSurfaceVariant
-                                              .withValues(alpha: 0.02)
-                                        ],
+                                      ? [AppColors.statusWarning.withValues(alpha: 0.10), AppColors.statusWarning.withValues(alpha: 0.04)]
+                                      : [colorScheme.onSurfaceVariant.withValues(alpha: 0.06), colorScheme.onSurfaceVariant.withValues(alpha: 0.02)],
                                   begin: Alignment.topLeft,
                                   end: Alignment.bottomRight,
                                 ),
                                 borderRadius: BorderRadius.circular(14),
                                 border: Border.all(
                                   color: anyOnline
-                                      ? AppColors.statusWarning
-                                          .withValues(alpha: 0.25)
-                                      : colorScheme.onSurfaceVariant
-                                          .withValues(alpha: 0.1),
+                                      ? AppColors.statusWarning.withValues(alpha: 0.25)
+                                      : colorScheme.onSurfaceVariant.withValues(alpha: 0.1),
                                 ),
                               ),
                               child: Row(
@@ -2257,25 +2151,19 @@ class _DashboardScreenState extends State<DashboardScreen>
                                   Container(
                                     padding: const EdgeInsets.all(6),
                                     decoration: BoxDecoration(
-                                      color: (anyOnline
-                                              ? AppColors.statusWarning
-                                              : colorScheme.onSurfaceVariant)
-                                          .withValues(alpha: 0.12),
+                                      color: (anyOnline ? AppColors.statusWarning : colorScheme.onSurfaceVariant).withValues(alpha: 0.12),
                                       borderRadius: BorderRadius.circular(8),
                                     ),
                                     child: Icon(
                                       Icons.timer_outlined,
-                                      color: anyOnline
-                                          ? AppColors.statusWarning
-                                          : colorScheme.onSurfaceVariant,
+                                      color: anyOnline ? AppColors.statusWarning : colorScheme.onSurfaceVariant,
                                       size: 16,
                                     ),
                                   ),
                                   const SizedBox(width: 12),
                                   Expanded(
                                     child: Column(
-                                      crossAxisAlignment:
-                                          CrossAxisAlignment.start,
+                                      crossAxisAlignment: CrossAxisAlignment.start,
                                       children: [
                                         Text(
                                           anyOnline
@@ -2284,9 +2172,7 @@ class _DashboardScreenState extends State<DashboardScreen>
                                           style: TextStyle(
                                             fontSize: 13,
                                             fontWeight: FontWeight.w700,
-                                            color: anyOnline
-                                                ? AppColors.statusWarning
-                                                : colorScheme.onSurfaceVariant,
+                                            color: anyOnline ? AppColors.statusWarning : colorScheme.onSurfaceVariant,
                                           ),
                                         ),
                                         const SizedBox(height: 2),
@@ -2296,8 +2182,7 @@ class _DashboardScreenState extends State<DashboardScreen>
                                               : "No devices online — reset will resume on connection",
                                           style: TextStyle(
                                             fontSize: 10,
-                                            color: colorScheme.onSurfaceVariant
-                                                .withValues(alpha: 0.5),
+                                            color: colorScheme.onSurfaceVariant.withValues(alpha: 0.5),
                                             fontWeight: FontWeight.w500,
                                           ),
                                         ),
@@ -2318,78 +2203,44 @@ class _DashboardScreenState extends State<DashboardScreen>
                               children: [
                                 Expanded(
                                   flex: 5,
-                                  child: Text("LOCATION",
-                                      style: TextStyle(
-                                          fontWeight: FontWeight.w800,
-                                          fontSize: 10,
-                                          letterSpacing: 1.0,
-                                          color: colorScheme.onSurfaceVariant
-                                              .withValues(alpha: 0.5))),
+                                  child: Text("LOCATION", style: TextStyle(fontWeight: FontWeight.w800, fontSize: 10, letterSpacing: 1.0, color: colorScheme.onSurfaceVariant.withValues(alpha: 0.5))),
                                 ),
                                 Expanded(
                                   flex: 2,
-                                  child: Text("ENTRY",
-                                      textAlign: TextAlign.center,
-                                      style: TextStyle(
-                                          fontWeight: FontWeight.w800,
-                                          fontSize: 10,
-                                          letterSpacing: 1.0,
-                                          color: colorScheme.onSurfaceVariant
-                                              .withValues(alpha: 0.5))),
+                                  child: Text("ENTRY", textAlign: TextAlign.center, style: TextStyle(fontWeight: FontWeight.w800, fontSize: 10, letterSpacing: 1.0, color: colorScheme.onSurfaceVariant.withValues(alpha: 0.5))),
                                 ),
                                 Expanded(
                                   flex: 2,
-                                  child: Text("EXIT",
-                                      textAlign: TextAlign.center,
-                                      style: TextStyle(
-                                          fontWeight: FontWeight.w800,
-                                          fontSize: 10,
-                                          letterSpacing: 1.0,
-                                          color: colorScheme.onSurfaceVariant
-                                              .withValues(alpha: 0.5))),
+                                  child: Text("EXIT", textAlign: TextAlign.center, style: TextStyle(fontWeight: FontWeight.w800, fontSize: 10, letterSpacing: 1.0, color: colorScheme.onSurfaceVariant.withValues(alpha: 0.5))),
                                 ),
-                                const SizedBox(
-                                    width: 36), // Space for reset button
+                                const SizedBox(width: 36), // Space for reset button
                               ],
                             ),
                           ),
 
                           Padding(
                             padding: const EdgeInsets.symmetric(horizontal: 24),
-                            child: Divider(
-                                color: isDark
-                                    ? Colors.white.withValues(alpha: 0.06)
-                                    : Colors.black.withValues(alpha: 0.06),
-                                height: 20),
+                            child: Divider(color: isDark ? Colors.white.withValues(alpha: 0.06) : Colors.black.withValues(alpha: 0.06), height: 20),
                           ),
 
                           // ── Device Rows ─────────────────────────
                           Flexible(
                             child: ListView.builder(
-                              padding:
-                                  const EdgeInsets.symmetric(horizontal: 24),
+                              padding: const EdgeInsets.symmetric(horizontal: 24),
                               shrinkWrap: true,
                               itemCount: _deviceData.length,
                               itemBuilder: (context, index) {
                                 final data = _deviceData[index];
-                                final int rawEntries =
-                                    ((data['entries'] ?? 0) as num).toInt();
-                                final int rawExits =
-                                    ((data['exits'] ?? 0) as num).toInt();
+                                final int rawEntries = ((data['entries'] ?? 0) as num).toInt();
+                                final int rawExits = ((data['exits'] ?? 0) as num).toInt();
                                 final bool isOnline = data['isOnline'] == true;
-                                final String mac =
-                                    data['mac']?.toString() ?? '';
-                                final String location =
-                                    data['location']?.toString() ?? 'Unknown';
+                                final String mac = data['mac']?.toString() ?? '';
+                                final String location = data['location']?.toString() ?? 'Unknown';
 
                                 String updatedText = "\u2014";
                                 final lu = data['last_updated'];
                                 if (lu != null) {
-                                  final ts =
-                                      DateTime.fromMillisecondsSinceEpoch(
-                                          (lu is int)
-                                              ? lu
-                                              : (lu as num).toInt());
+                                  final ts = DateTime.fromMillisecondsSinceEpoch((lu is int) ? lu : (lu as num).toInt());
                                   final diff = now.difference(ts);
                                   if (diff.inSeconds < 60) {
                                     updatedText = "Just now";
@@ -2407,17 +2258,10 @@ class _DashboardScreenState extends State<DashboardScreen>
                                   child: Container(
                                     padding: const EdgeInsets.all(14),
                                     decoration: BoxDecoration(
-                                      color: isDark
-                                          ? Colors.white.withValues(alpha: 0.03)
-                                          : Colors.black
-                                              .withValues(alpha: 0.02),
+                                      color: isDark ? Colors.white.withValues(alpha: 0.03) : Colors.black.withValues(alpha: 0.02),
                                       borderRadius: BorderRadius.circular(16),
                                       border: Border.all(
-                                        color: isDark
-                                            ? Colors.white
-                                                .withValues(alpha: 0.05)
-                                            : Colors.black
-                                                .withValues(alpha: 0.04),
+                                        color: isDark ? Colors.white.withValues(alpha: 0.05) : Colors.black.withValues(alpha: 0.04),
                                       ),
                                     ),
                                     child: Column(
@@ -2429,16 +2273,13 @@ class _DashboardScreenState extends State<DashboardScreen>
                                             Expanded(
                                               flex: 5,
                                               child: Column(
-                                                crossAxisAlignment:
-                                                    CrossAxisAlignment.start,
+                                                crossAxisAlignment: CrossAxisAlignment.start,
                                                 children: [
                                                   Text(
                                                     location,
                                                     style: TextStyle(
-                                                      color:
-                                                          colorScheme.onSurface,
-                                                      fontWeight:
-                                                          FontWeight.w700,
+                                                      color: colorScheme.onSurface,
+                                                      fontWeight: FontWeight.w700,
                                                       fontSize: 14,
                                                     ),
                                                   ),
@@ -2448,25 +2289,12 @@ class _DashboardScreenState extends State<DashboardScreen>
                                                       Container(
                                                         width: 6,
                                                         height: 6,
-                                                        decoration:
-                                                            BoxDecoration(
-                                                          shape:
-                                                              BoxShape.circle,
-                                                          color: isOnline
-                                                              ? AppColors
-                                                                  .statusSafe
-                                                              : AppColors
-                                                                  .statusDanger,
+                                                        decoration: BoxDecoration(
+                                                          shape: BoxShape.circle,
+                                                          color: isOnline ? AppColors.statusSafe : AppColors.statusDanger,
                                                           boxShadow: [
                                                             BoxShadow(
-                                                              color: (isOnline
-                                                                      ? AppColors
-                                                                          .statusSafe
-                                                                      : AppColors
-                                                                          .statusDanger)
-                                                                  .withValues(
-                                                                      alpha:
-                                                                          0.5),
+                                                              color: (isOnline ? AppColors.statusSafe : AppColors.statusDanger).withValues(alpha: 0.5),
                                                               blurRadius: 4,
                                                             ),
                                                           ],
@@ -2474,18 +2302,11 @@ class _DashboardScreenState extends State<DashboardScreen>
                                                       ),
                                                       const SizedBox(width: 6),
                                                       Text(
-                                                        isOnline
-                                                            ? "Online"
-                                                            : "Offline",
+                                                        isOnline ? "Online" : "Offline",
                                                         style: TextStyle(
                                                           fontSize: 10,
-                                                          fontWeight:
-                                                              FontWeight.w600,
-                                                          color: isOnline
-                                                              ? AppColors
-                                                                  .statusSafe
-                                                              : AppColors
-                                                                  .statusDanger,
+                                                          fontWeight: FontWeight.w600,
+                                                          color: isOnline ? AppColors.statusSafe : AppColors.statusDanger,
                                                         ),
                                                       ),
                                                       const SizedBox(width: 8),
@@ -2493,12 +2314,8 @@ class _DashboardScreenState extends State<DashboardScreen>
                                                         "· $updatedText",
                                                         style: TextStyle(
                                                           fontSize: 10,
-                                                          color: colorScheme
-                                                              .onSurfaceVariant
-                                                              .withValues(
-                                                                  alpha: 0.45),
-                                                          fontWeight:
-                                                              FontWeight.w500,
+                                                          color: colorScheme.onSurfaceVariant.withValues(alpha: 0.45),
+                                                          fontWeight: FontWeight.w500,
                                                         ),
                                                       ),
                                                     ],
@@ -2515,10 +2332,8 @@ class _DashboardScreenState extends State<DashboardScreen>
                                                     rawEntries.toString(),
                                                     textAlign: TextAlign.center,
                                                     style: TextStyle(
-                                                      color:
-                                                          AppColors.statusSafe,
-                                                      fontWeight:
-                                                          FontWeight.w800,
+                                                      color: AppColors.statusSafe,
+                                                      fontWeight: FontWeight.w800,
                                                       fontSize: 18,
                                                     ),
                                                   ),
@@ -2534,10 +2349,8 @@ class _DashboardScreenState extends State<DashboardScreen>
                                                     rawExits.toString(),
                                                     textAlign: TextAlign.center,
                                                     style: TextStyle(
-                                                      color: AppColors
-                                                          .statusDanger,
-                                                      fontWeight:
-                                                          FontWeight.w800,
+                                                      color: AppColors.statusDanger,
+                                                      fontWeight: FontWeight.w800,
                                                       fontSize: 18,
                                                     ),
                                                   ),
@@ -2548,110 +2361,56 @@ class _DashboardScreenState extends State<DashboardScreen>
                                             SizedBox(
                                               width: 36,
                                               child: IconButton(
-                                                onPressed: mac.isEmpty
-                                                    ? null
-                                                    : () {
-                                                        showDialog(
-                                                          context:
-                                                              dialogContext,
-                                                          barrierDismissible:
-                                                              true,
-                                                          builder: (ctx) =>
-                                                              AlertDialog(
-                                                            backgroundColor:
-                                                                colorScheme
-                                                                    .surface,
-                                                            shape: RoundedRectangleBorder(
-                                                                borderRadius:
-                                                                    BorderRadius
-                                                                        .circular(
-                                                                            20)),
-                                                            title: Row(
-                                                              children: [
-                                                                Icon(
-                                                                    Icons
-                                                                        .restart_alt_rounded,
-                                                                    color: AppColors
-                                                                        .statusWarning,
-                                                                    size: 24),
-                                                                const SizedBox(
-                                                                    width: 10),
-                                                                Expanded(
-                                                                  child: Text(
-                                                                      "Reset $location?",
-                                                                      style: const TextStyle(
-                                                                          fontWeight: FontWeight
-                                                                              .bold,
-                                                                          fontSize:
-                                                                              17)),
-                                                                ),
-                                                              ],
-                                                            ),
-                                                            content: Text(
-                                                              "This will reset entries, exits, and people inside to 0 for '$location'.\n\nThis action cannot be undone.",
-                                                              style: TextStyle(
-                                                                  color: colorScheme
-                                                                      .onSurfaceVariant,
-                                                                  fontSize: 14,
-                                                                  height: 1.5),
-                                                            ),
-                                                            actions: [
-                                                              TextButton(
-                                                                onPressed: () =>
-                                                                    Navigator
-                                                                        .pop(
-                                                                            ctx),
-                                                                child: Text(
-                                                                    "Cancel",
-                                                                    style: TextStyle(
-                                                                        color: colorScheme
-                                                                            .onSurfaceVariant,
-                                                                        fontWeight:
-                                                                            FontWeight.bold)),
-                                                              ),
-                                                              ElevatedButton(
-                                                                onPressed: () {
-                                                                  Navigator.pop(
-                                                                      ctx);
-                                                                  Navigator.pop(
-                                                                      dialogContext);
-                                                                  _resetSingleDevice(
-                                                                      mac,
-                                                                      location);
-                                                                },
-                                                                style: ElevatedButton
-                                                                    .styleFrom(
-                                                                  backgroundColor:
-                                                                      AppColors
-                                                                          .statusWarning,
-                                                                  foregroundColor:
-                                                                      Colors
-                                                                          .white,
-                                                                  elevation: 0,
-                                                                  shape: RoundedRectangleBorder(
-                                                                      borderRadius:
-                                                                          BorderRadius.circular(
-                                                                              10)),
-                                                                ),
-                                                                child: const Text(
-                                                                    "RESET",
-                                                                    style: TextStyle(
-                                                                        fontWeight:
-                                                                            FontWeight.bold)),
-                                                              ),
-                                                            ],
+                                                onPressed: mac.isEmpty ? null : () {
+                                                  showDialog(
+                                                    context: dialogContext,
+                                                    barrierDismissible: true,
+                                                    builder: (ctx) => AlertDialog(
+                                                      backgroundColor: colorScheme.surface,
+                                                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+                                                      title: Row(
+                                                        children: [
+                                                          Icon(Icons.restart_alt_rounded, color: AppColors.statusWarning, size: 24),
+                                                          const SizedBox(width: 10),
+                                                          Expanded(
+                                                            child: Text("Reset $location?", style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 17)),
                                                           ),
-                                                        );
-                                                      },
+                                                        ],
+                                                      ),
+                                                      content: Text(
+                                                        "This will reset entries, exits, and people inside to 0 for '$location'.\n\nThis action cannot be undone.",
+                                                        style: TextStyle(color: colorScheme.onSurfaceVariant, fontSize: 14, height: 1.5),
+                                                      ),
+                                                      actions: [
+                                                        TextButton(
+                                                          onPressed: () => Navigator.pop(ctx),
+                                                          child: Text("Cancel", style: TextStyle(color: colorScheme.onSurfaceVariant, fontWeight: FontWeight.bold)),
+                                                        ),
+                                                        ElevatedButton(
+                                                          onPressed: () {
+                                                            Navigator.pop(ctx);
+                                                            Navigator.pop(dialogContext);
+                                                            _resetSingleDevice(mac, location);
+                                                          },
+                                                          style: ElevatedButton.styleFrom(
+                                                            backgroundColor: AppColors.statusWarning,
+                                                            foregroundColor: Colors.white,
+                                                            elevation: 0,
+                                                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                                                          ),
+                                                          child: const Text("RESET", style: TextStyle(fontWeight: FontWeight.bold)),
+                                                        ),
+                                                      ],
+                                                    ),
+                                                  );
+                                                },
                                                 icon: const Icon(
                                                   Icons.restart_alt_rounded,
                                                   size: 18,
-                                                  color:
-                                                      AppColors.statusWarning,
+                                                  color: AppColors.statusWarning,
                                                 ),
                                                 padding: EdgeInsets.zero,
-                                                constraints:
-                                                    const BoxConstraints(),
+                                                constraints: const BoxConstraints(),
                                               ),
                                             ),
                                           ],
@@ -2676,58 +2435,37 @@ class _DashboardScreenState extends State<DashboardScreen>
                                     barrierDismissible: true,
                                     builder: (ctx) => AlertDialog(
                                       backgroundColor: colorScheme.surface,
-                                      shape: RoundedRectangleBorder(
-                                          borderRadius:
-                                              BorderRadius.circular(20)),
+                                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
                                       title: Row(
                                         children: [
-                                          Icon(Icons.warning_amber_rounded,
-                                              color: AppColors.statusDanger,
-                                              size: 28),
+                                          Icon(Icons.warning_amber_rounded, color: AppColors.statusDanger, size: 28),
                                           const SizedBox(width: 12),
-                                          const Text("Reset All Counts",
-                                              style: TextStyle(
-                                                  fontWeight: FontWeight.bold)),
+                                          const Text("Reset All Counts", style: TextStyle(fontWeight: FontWeight.bold)),
                                         ],
                                       ),
                                       content: Text(
                                         "This will reset entries, exits, and people inside to 0 for ALL devices.\n\nThis action cannot be undone.",
-                                        style: TextStyle(
-                                            color: colorScheme.onSurfaceVariant,
-                                            fontSize: 14,
-                                            height: 1.5),
+                                        style: TextStyle(color: colorScheme.onSurfaceVariant, fontSize: 14, height: 1.5),
                                       ),
                                       actions: [
                                         TextButton(
                                           onPressed: () => Navigator.pop(ctx),
-                                          child: Text("Cancel",
-                                              style: TextStyle(
-                                                  color: colorScheme
-                                                      .onSurfaceVariant,
-                                                  fontWeight: FontWeight.bold)),
+                                          child: Text("Cancel", style: TextStyle(color: colorScheme.onSurfaceVariant, fontWeight: FontWeight.bold)),
                                         ),
                                         ElevatedButton(
                                           onPressed: () async {
                                             Navigator.pop(ctx);
                                             Navigator.pop(dialogContext);
-                                            final dbRef =
-                                                FirebaseDatabase.instance.ref();
-                                            final currentHour =
-                                                DateTime.now().hour;
+                                            final dbRef = FirebaseDatabase.instance.ref();
+                                            final currentHour = DateTime.now().hour;
                                             for (final device in _deviceData) {
-                                              final mac =
-                                                  device['mac']?.toString() ??
-                                                      '';
+                                              final mac = device['mac']?.toString() ?? '';
                                               if (mac.isNotEmpty) {
-                                                await dbRef
-                                                    .child('sensor_data')
-                                                    .child(mac)
-                                                    .update({
+                                                await dbRef.child('sensor_data').child(mac).update({
                                                   'total_entries': 0,
                                                   'total_exits': 0,
                                                   'people_inside': 0,
-                                                  'last_reset_hour':
-                                                      currentHour,
+                                                  'last_reset_hour': currentHour,
                                                 });
                                               }
                                             }
@@ -2735,46 +2473,32 @@ class _DashboardScreenState extends State<DashboardScreen>
                                               CustomNotificationModal.show(
                                                 context: this.context,
                                                 title: "Counts Reset",
-                                                message:
-                                                    "All ToF counts have been reset to 0.",
+                                                message: "All ToF counts have been reset to 0.",
                                                 isSuccess: true,
                                               );
                                             }
                                           },
                                           style: ElevatedButton.styleFrom(
-                                            backgroundColor:
-                                                AppColors.statusDanger,
+                                            backgroundColor: AppColors.statusDanger,
                                             foregroundColor: Colors.white,
                                             elevation: 0,
-                                            shape: RoundedRectangleBorder(
-                                                borderRadius:
-                                                    BorderRadius.circular(10)),
+                                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
                                           ),
-                                          child: const Text("RESET ALL",
-                                              style: TextStyle(
-                                                  fontWeight: FontWeight.bold)),
+                                          child: const Text("RESET ALL", style: TextStyle(fontWeight: FontWeight.bold)),
                                         ),
                                       ],
                                     ),
                                   );
                                 },
-                                icon: const Icon(Icons.restart_alt_rounded,
-                                    size: 18),
-                                label: const Text("Reset All ToF Counts",
-                                    style: TextStyle(
-                                        fontWeight: FontWeight.w700,
-                                        fontSize: 14)),
+                                icon: const Icon(Icons.restart_alt_rounded, size: 18),
+                                label: const Text("Reset All ToF Counts", style: TextStyle(fontWeight: FontWeight.w700, fontSize: 14)),
                                 style: ElevatedButton.styleFrom(
-                                  backgroundColor: AppColors.statusDanger
-                                      .withValues(alpha: 0.08),
+                                  backgroundColor: AppColors.statusDanger.withValues(alpha: 0.08),
                                   foregroundColor: AppColors.statusDanger,
-                                  padding:
-                                      const EdgeInsets.symmetric(vertical: 16),
+                                  padding: const EdgeInsets.symmetric(vertical: 16),
                                   shape: RoundedRectangleBorder(
                                     borderRadius: BorderRadius.circular(16),
-                                    side: BorderSide(
-                                        color: AppColors.statusDanger
-                                            .withValues(alpha: 0.2)),
+                                    side: BorderSide(color: AppColors.statusDanger.withValues(alpha: 0.2)),
                                   ),
                                   elevation: 0,
                                 ),
@@ -2794,8 +2518,7 @@ class _DashboardScreenState extends State<DashboardScreen>
     );
   }
 
-  Widget _buildRoleCard(BuildContext context, String label, int count,
-      IconData icon, Color color) {
+  Widget _buildRoleCard(BuildContext context, String label, int count, IconData icon, Color color) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
 
     return ClipRRect(
@@ -2805,8 +2528,7 @@ class _DashboardScreenState extends State<DashboardScreen>
         child: Container(
           padding: const EdgeInsets.symmetric(vertical: 20, horizontal: 16),
           decoration: BoxDecoration(
-            color:
-                (isDark ? Colors.white : Colors.black).withValues(alpha: 0.04),
+            color: (isDark ? Colors.white : Colors.black).withValues(alpha: 0.04),
             borderRadius: BorderRadius.circular(20),
             border: Border.all(
               color: color.withValues(alpha: 0.15),
@@ -2829,18 +2551,12 @@ class _DashboardScreenState extends State<DashboardScreen>
                   const SizedBox(width: 8),
                   Expanded(
                     child: Text(
-                      label
-                          .toUpperCase()
-                          .split(' ')
-                          .first, // Just the role name
+                      label.toUpperCase().split(' ').first, // Just the role name
                       style: TextStyle(
                         fontSize: 10,
                         fontWeight: FontWeight.w800,
                         letterSpacing: 1.2,
-                        color: Theme.of(context)
-                            .colorScheme
-                            .onSurfaceVariant
-                            .withValues(alpha: 0.6),
+                        color: Theme.of(context).colorScheme.onSurfaceVariant.withValues(alpha: 0.6),
                       ),
                     ),
                   ),
@@ -2884,8 +2600,7 @@ class _DashboardScreenState extends State<DashboardScreen>
           onTap: () {
             Navigator.push(
               context,
-              MaterialPageRoute(
-                  builder: (context) => const UsersManagementScreen()),
+              MaterialPageRoute(builder: (context) => const UsersManagementScreen()),
             );
           },
           borderRadius: BorderRadius.circular(20),
@@ -2893,8 +2608,7 @@ class _DashboardScreenState extends State<DashboardScreen>
             width: double.infinity,
             padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 20),
             decoration: BoxDecoration(
-              color:
-                  AppColors.primaryBlue.withValues(alpha: isDark ? 0.08 : 0.05),
+              color: AppColors.primaryBlue.withValues(alpha: isDark ? 0.08 : 0.05),
               borderRadius: BorderRadius.circular(20),
               border: Border.all(
                 color: AppColors.primaryBlue.withValues(alpha: 0.25),
@@ -2916,8 +2630,7 @@ class _DashboardScreenState extends State<DashboardScreen>
                       ),
                     ],
                   ),
-                  child: const Icon(Icons.manage_accounts_rounded,
-                      color: AppColors.primaryBlue, size: 22),
+                  child: const Icon(Icons.manage_accounts_rounded, color: AppColors.primaryBlue, size: 22),
                 ),
                 const SizedBox(width: 16),
                 Expanded(
@@ -2951,8 +2664,7 @@ class _DashboardScreenState extends State<DashboardScreen>
                     color: AppColors.primaryBlue.withValues(alpha: 0.1),
                     shape: BoxShape.circle,
                   ),
-                  child: const Icon(Icons.arrow_forward_ios_rounded,
-                      size: 12, color: AppColors.primaryBlue),
+                  child: const Icon(Icons.arrow_forward_ios_rounded, size: 12, color: AppColors.primaryBlue),
                 ),
               ],
             ),
@@ -2994,11 +2706,13 @@ class _TacticalDialButtonState extends State<_TacticalDialButton> {
   @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
-
+    
     return Column(
       mainAxisAlignment: MainAxisAlignment.center,
       children: [
-        GestureDetector(
+        FittedBox(
+          fit: BoxFit.contain,
+          child: GestureDetector(
           onTapDown: (_) => setState(() => _isPressed = true),
           onTapUp: (_) => setState(() => _isPressed = false),
           onTapCancel: () => setState(() => _isPressed = false),
@@ -3024,17 +2738,12 @@ class _TacticalDialButtonState extends State<_TacticalDialButton> {
                 shape: BoxShape.circle,
                 boxShadow: [
                   BoxShadow(
-                    color: widget.color.withValues(
-                        alpha: widget.isSelected
-                            ? (0.3 + (_isPressed ? 0.2 : 0))
-                            : 0.05),
+                    color: widget.color.withValues(alpha: widget.isSelected ? (0.3 + (_isPressed ? 0.2 : 0)) : 0.05),
                     blurRadius: _isPressed ? 70 : 50,
                     spreadRadius: _isPressed ? 12 : 8,
                   ),
                   BoxShadow(
-                    color: isDark
-                        ? Colors.black.withValues(alpha: 0.5)
-                        : widget.color.withValues(alpha: 0.1),
+                    color: isDark ? Colors.black.withValues(alpha: 0.5) : widget.color.withValues(alpha: 0.1),
                     offset: Offset(_isPressed ? 6 : 14, _isPressed ? 6 : 14),
                     blurRadius: _isPressed ? 15 : 28,
                   ),
@@ -3053,17 +2762,14 @@ class _TacticalDialButtonState extends State<_TacticalDialButton> {
                         begin: Alignment.topLeft,
                         end: Alignment.bottomRight,
                         colors: [
-                          (isDark ? Colors.white : Colors.black)
-                              .withValues(alpha: 0.15),
-                          (isDark ? Colors.white : Colors.black)
-                              .withValues(alpha: 0.2),
-                          (isDark ? Colors.white : Colors.black)
-                              .withValues(alpha: 0.05),
+                          (isDark ? Colors.white : Colors.black).withValues(alpha: 0.15),
+                          (isDark ? Colors.white : Colors.black).withValues(alpha: 0.2),
+                          (isDark ? Colors.white : Colors.black).withValues(alpha: 0.05),
                         ],
                       ),
                       border: Border.all(
-                        color: widget.isSelected
-                            ? widget.color.withValues(alpha: 0.6)
+                        color: widget.isSelected 
+                            ? widget.color.withValues(alpha: 0.6) 
                             : (isDark ? Colors.white10 : Colors.black12),
                         width: 3.5,
                       ),
@@ -3100,36 +2806,28 @@ class _TacticalDialButtonState extends State<_TacticalDialButton> {
                       gradient: LinearGradient(
                         begin: Alignment.topLeft,
                         end: Alignment.bottomRight,
-                        colors: isDark
-                            ? [
-                                _isPressed
-                                    ? const Color(0xFF161B26)
-                                    : const Color(0xFF242C3D),
-                                _isPressed
-                                    ? const Color(0xFF0F121A)
-                                    : const Color(0xFF161B26)
-                              ]
-                            : [Colors.white, const Color(0xFFE2E8F0)],
+                        colors: isDark 
+                          ? [
+                              _isPressed ? const Color(0xFF161B26) : const Color(0xFF242C3D), 
+                              _isPressed ? const Color(0xFF0F121A) : const Color(0xFF161B26)
+                            ]
+                          : [Colors.white, const Color(0xFFE2E8F0)],
                       ),
                       boxShadow: [
                         BoxShadow(
-                          color: Colors.black
-                              .withValues(alpha: _isPressed ? 0.4 : 0.3),
-                          offset:
-                              Offset(_isPressed ? 2 : 6, _isPressed ? 2 : 6),
+                          color: Colors.black.withValues(alpha: _isPressed ? 0.4 : 0.3),
+                          offset: Offset(_isPressed ? 2 : 6, _isPressed ? 2 : 6),
                           blurRadius: _isPressed ? 5 : 15,
                         ),
                         if (widget.isSelected)
                           BoxShadow(
-                            color: widget.color
-                                .withValues(alpha: _isPressed ? 0.7 : 0.5),
+                            color: widget.color.withValues(alpha: _isPressed ? 0.7 : 0.5),
                             blurRadius: _isPressed ? 50 : 40,
                             spreadRadius: _isPressed ? 10 : 5,
                           ),
                         // Subtle inner glow
                         BoxShadow(
-                          color: Colors.white
-                              .withValues(alpha: isDark ? 0.05 : 0.4),
+                          color: Colors.white.withValues(alpha: isDark ? 0.05 : 0.4),
                           offset: const Offset(-2, -2),
                           blurRadius: 4,
                         ),
@@ -3141,9 +2839,7 @@ class _TacticalDialButtonState extends State<_TacticalDialButton> {
                         Icon(
                           widget.icon,
                           size: 84,
-                          color: widget.isSelected
-                              ? widget.color
-                              : (isDark ? Colors.white24 : Colors.grey[400]),
+                          color: widget.isSelected ? widget.color : (isDark ? Colors.white24 : Colors.grey[400]),
                         ),
                         const SizedBox(height: 14),
                         Text(
@@ -3152,9 +2848,7 @@ class _TacticalDialButtonState extends State<_TacticalDialButton> {
                           style: TextStyle(
                             fontSize: 22,
                             fontWeight: FontWeight.w900,
-                            color: widget.isSelected
-                                ? widget.color
-                                : (isDark ? Colors.white24 : Colors.grey[400]),
+                            color: widget.isSelected ? widget.color : (isDark ? Colors.white24 : Colors.grey[400]),
                             letterSpacing: 1.0,
                             height: 1.1,
                           ),
@@ -3166,10 +2860,8 @@ class _TacticalDialButtonState extends State<_TacticalDialButton> {
                           style: TextStyle(
                             fontSize: 11,
                             fontWeight: FontWeight.w600,
-                            color: widget.isSelected
-                                ? (isDark
-                                    ? Colors.white.withValues(alpha: 0.75)
-                                    : widget.color.withValues(alpha: 0.9))
+                            color: widget.isSelected 
+                                ? (isDark ? Colors.white.withValues(alpha: 0.75) : widget.color.withValues(alpha: 0.9))
                                 : (isDark ? Colors.white10 : Colors.grey[300]),
                             letterSpacing: 0.2,
                           ),
@@ -3182,9 +2874,10 @@ class _TacticalDialButtonState extends State<_TacticalDialButton> {
             ),
           ),
         ),
-      ],
-    );
-  }
+      ),
+    ],
+  );
+}
 }
 
 class _PulsingDot extends StatefulWidget {
@@ -3249,7 +2942,7 @@ class _AnimatedNavBarPainter extends CustomPainter {
   void paint(Canvas canvas, Size size) {
     // Safely get properties to avoid Null type errors during hot reload transitions
     final bool isDark = Theme.of(context).brightness == Brightness.dark;
-
+    
     final paint = Paint()
       ..color = isDark ? AppColors.surfaceDark : Colors.white
       ..style = PaintingStyle.fill;
@@ -3274,9 +2967,9 @@ class _AnimatedNavBarPainter extends CustomPainter {
       ).createShader(Rect.fromLTWH(0, 0, w, 20))
       ..style = PaintingStyle.stroke
       ..strokeWidth = 1.5;
-
+    
     final double center = w / 2;
-
+    
     // Notch dimensions - smoothly expands when Alerts is active
     final double notchRadius = 38.0 + (6.0 * alertsAnimationValue);
     final double notchDepth = 30.0 + (6.0 * alertsAnimationValue);
@@ -3286,23 +2979,17 @@ class _AnimatedNavBarPainter extends CustomPainter {
 
     // Left line to notch
     path.lineTo(center - notchRadius - 15, 0);
-
+    
     // Notch curve (Bezier that mimics a concave well)
     path.cubicTo(
-      center - notchRadius + 5,
-      0,
-      center - notchRadius + 8,
-      notchDepth,
-      center,
-      notchDepth,
+      center - notchRadius + 5, 0, 
+      center - notchRadius + 8, notchDepth, 
+      center, notchDepth,
     );
     path.cubicTo(
-      center + notchRadius - 8,
-      notchDepth,
-      center + notchRadius - 5,
-      0,
-      center + notchRadius + 15,
-      0,
+      center + notchRadius - 8, notchDepth, 
+      center + notchRadius - 5, 0, 
+      center + notchRadius + 15, 0,
     );
 
     // Right line & top right radius
@@ -3326,9 +3013,7 @@ class _AnimatedNavBarPainter extends CustomPainter {
     canvas.drawPath(
       path,
       Paint()
-        ..color = isDark
-            ? Colors.white.withValues(alpha: 0.12)
-            : Colors.black.withValues(alpha: 0.08)
+        ..color = isDark ? Colors.white.withValues(alpha: 0.12) : Colors.black.withValues(alpha: 0.08)
         ..style = PaintingStyle.stroke
         ..strokeWidth = 1.2,
     );

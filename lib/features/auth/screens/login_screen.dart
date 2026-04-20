@@ -7,6 +7,7 @@ import '../../../core/widgets/custom_notification_modal.dart';
 import '../../../core/providers/user_provider.dart';
 import '../services/auth_service.dart';
 import '../widgets/forgot_password_dialog.dart';
+import '../../splash/screens/splash_screen.dart';
 
 class LoginScreen extends StatefulWidget {
   final bool animate;
@@ -22,6 +23,7 @@ class _LoginScreenState extends State<LoginScreen> {
   final AuthService _authService = AuthService();
 
   bool _isPasswordVisible = false;
+  bool _isLoading = false;
 
   @override
   void dispose() {
@@ -30,7 +32,7 @@ class _LoginScreenState extends State<LoginScreen> {
     super.dispose();
   }
 
-  void _handleLogin() {
+  Future<void> _handleLogin() async {
     final identifier = _identifierController.text.trim();
     final password = _passwordController.text;
 
@@ -44,45 +46,72 @@ class _LoginScreenState extends State<LoginScreen> {
       return;
     }
 
-    // Capture provider ref BEFORE navigating away — once pushReplacement runs,
-    // this widget is destroyed and `mounted` returns false, which would silently
-    // skip the setUser call and leave the profile with all fallback values.
-    final userProvider = context.read<UserProvider>();
+    setState(() => _isLoading = true);
 
-    // ── Smart Auth Future ────────────────────────────────────────────────────
-    // We define the future here but DON'T await it. We pass it to the Splash
-    // screen, which will handle the pulse-and-sync loop.
-    final authFuture = () async {
-      // 1. Perform the authentication handshake
+    try {
+      // Capture provider ref BEFORE any delays/transitions
+      final userProvider = context.read<UserProvider>();
+
+      // 1. Perform the actual authentication handshake on the Login Screen
       final payload = await _authService.login(identifier, password);
 
-      // 2. Set the global UserProvider state using the captured reference
-      // (Safe even after widget is gone — we use the variable, not context)
+      // 2. Set the global UserProvider state
       userProvider.setUser(payload['user'], payload['userData']);
 
       final userData = payload['userData'] as Map<String, dynamic>;
       final bool requiresPasswordChange =
           userData['requiresPasswordChange'] == true;
 
-      // 3. Return the target destination for the Splash screen to navigate to
+      // 3. Define target route and args
+      String targetRoute;
+      Map<String, dynamic>? routeArgs;
+
       if (requiresPasswordChange) {
-        return {
-          'route': '/force-password-change',
-          'args': {'email': payload['user'].email ?? '', 'userData': userData},
+        targetRoute = '/force-password-change';
+        routeArgs = {
+          'email': payload['user'].email ?? '',
+          'userData': userData
         };
       } else {
-        return {'route': '/dashboard'};
+        targetRoute = '/dashboard';
       }
-    }();
 
-    // Transition to splash for the "Loading Data" / "Syncing" vibe
-    Navigator.pushReplacementNamed(
-      context,
-      '/splash',
-      arguments: {
-        'authFuture': authFuture,
-      },
-    );
+      if (!mounted) return;
+
+      // 4. Navigate to Splash Screen with a smooth Fade Transition
+      // We pass the already-resolved result wrapped in a Future so Splash
+      // can still "await" it as part of its pulse timing logic.
+      Navigator.pushReplacement(
+        context,
+        PageRouteBuilder(
+          pageBuilder: (context, animation, secondaryAnimation) =>
+              const SplashScreen(),
+          settings: RouteSettings(
+            arguments: {
+              'authFuture': Future.value({
+                'route': targetRoute,
+                'args': routeArgs,
+              }),
+            },
+          ),
+          transitionsBuilder: (context, animation, secondaryAnimation, child) {
+            return FadeTransition(opacity: animation, child: child);
+          },
+          transitionDuration: const Duration(milliseconds: 800),
+        ),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _isLoading = false);
+      
+      final errorMsg = e.toString().replaceFirst('Exception: ', '');
+      CustomNotificationModal.show(
+        context: context,
+        title: "Authentication Error",
+        message: errorMsg,
+        isSuccess: false,
+      );
+    }
   }
 
   @override
@@ -280,8 +309,17 @@ class _LoginScreenState extends State<LoginScreen> {
                             ),
                             const SizedBox(height: 24),
                             ElevatedButton(
-                              onPressed: _handleLogin,
-                              child: const Text("Log In"),
+                              onPressed: _isLoading ? null : _handleLogin,
+                              child: _isLoading
+                                  ? const SizedBox(
+                                      width: 20,
+                                      height: 20,
+                                      child: CircularProgressIndicator(
+                                        color: Colors.white,
+                                        strokeWidth: 2,
+                                      ),
+                                    )
+                                  : const Text("Log In"),
                             ),
                             const SizedBox(height: 16),
                             TextButton(

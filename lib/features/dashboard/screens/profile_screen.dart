@@ -23,7 +23,7 @@ class ProfileScreen extends StatefulWidget {
 }
 
 class _ProfileScreenState extends State<ProfileScreen> {
-  static const _accentBlue = Color(0xFF0056D2);
+  static const _accentBlue = AppColors.primaryBlue;
 
   // ── editable state ─────────────────────────────────────────────────────────
   late TextEditingController _nameCtrl;
@@ -649,8 +649,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
           ? Container(
               padding: const EdgeInsets.fromLTRB(20, 16, 20, 32),
               decoration: BoxDecoration(
-                color: cs.surface,
-                boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: isDark ? 0.3 : 0.05), offset: const Offset(0, -4), blurRadius: 10)],
+                color: isDark ? AppColors.backgroundDark : cs.surface,
+                boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: isDark ? 0.4 : 0.05), offset: const Offset(0, -4), blurRadius: 10)],
               ),
               child: Row(children: [
                 Expanded(
